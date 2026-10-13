@@ -5,9 +5,9 @@
 - The join word `prairie482` is baked into the app and the backend — nothing to type on either phone.
 - Backend = the "Household Receipts" Apps Script project (code in `backend/`), deployed as a web app (deployment `AKfycbwmez6dyUMTubrqBMnQ6ehYslyQbhS6mXGPGBAP5OJ8P4sU_OsZZJEDba2sKaIT5amI`); its `/exec` URL is baked into `index.html` as `DEFAULTS.url`.
 - Sheet: https://docs.google.com/spreadsheets/d/18bVhLyeGozW-Z4pB32g_damnmpNo11LNLQa4V6h7HaE/edit · Photos: Drive folder "Household Receipts (photos)".
+- `ANTHROPIC_API_KEY` is set in the project's Script Properties; the full pipeline (photo → read → filed) has been verified live.
 
-**Left**
-1. Apps Script → Household Receipts → **Project Settings → Script Properties → Add**: `ANTHROPIC_API_KEY` = a Claude API key (console.anthropic.com → API Keys). Until it is set, receipts queue on the phones and the app says "Will retry".
+**Left** — nothing on the backend. On the phones: install the app at the new address (see Phones).
 
 **Phones**
 - Paul (Android): open the link in Chrome → ⋮ → *Add to Home screen*. Once installed, "Receipts" also appears in the Share menu (screenshots and PDF receipts can be shared straight in).
@@ -24,11 +24,17 @@
 - *Bank check* (bottom of Spending): upload a CSV export, a PDF statement, or screenshots of the banking app. Every charge is matched to a receipt by amount + date (+ store name). Charges with no receipt get "Add as expense" (with a category; "Always file this way" remembers a rule in the sheet's **Bank Rules** tab) or "Not spending" (transfers, card payments).
 - *Budget* tab: proposes a monthly budget per category from the last 3 months, editable, saved to the sheet's **Budgets** tab; shows left / over and "on pace for" live through the month.
 
+**Tags (e.g. Homeschool)**
+- Camera → **🏷️ Tag** → pick *Homeschool*; it stays on for every snap until turned off (🏷️ → *No tag*). Already-filed receipt → tap it in Recent → **🏷️ Tag** (asks whether to file all its items as Homeschooling).
+- A tagged receipt gets: the tag in the Receipts and Items tabs (`Tag` column), its photo shortcut in Drive under **Household Receipts (photos) / Tagged / Homeschool**, and the reader is told the receipt is for home education so items land in the *Homeschooling* category.
+- Spending → *Tagged receipts* → Homeschool: total for the period, the items, and links to the Drive folder and the sheet — that's the reimbursement claim pack (filter the Items tab on Tag = Homeschool for the list).
+- More tags: add a row to the sheet's **Tags** tab (Tag, Category, Notes); the app picks it up on next refresh. Categories are editable in the **Categories** tab (*Homeschooling* was added).
+
 **Duplicates**
 - Same photo twice: caught on the phone and on the server (hash).
 - Same purchase from two phones or a photo + a screenshot: same store, date and total → if the printed time matches or the items match, it is filed as `duplicate` (not counted, "Keep both" undoes); if it can't be sure, it is counted but flagged "possible duplicate".
 
-**Sheet tabs** — Receipts, Items, Bank, Bank Rules, Budgets, Categories (editable), Log.
+**Sheet tabs** — Receipts, Tags, Items, Bank, Bank Rules, Budgets, Categories (editable), Log.
 Receipts with Source = `bank` are expenses filed from a statement; `superseded` means a real receipt replaced one later.
 
 **Script properties** — `ANTHROPIC_API_KEY` (required), `CLAUDE_MODEL` (default claude-sonnet-5-5), `CLAUDE_THINKING` (`off` = no up-front thinking, the default; `adaptive` if receipts keep getting misread), `CLAUDE_EFFORT` (`medium` default; `low` / `high`). `APP_TOKEN`, `SPREADSHEET_ID`, `FOLDER_ID` are set by `setup`.
