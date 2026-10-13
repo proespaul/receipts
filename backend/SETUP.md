@@ -23,18 +23,21 @@
 - *Needs a look* (top of Spending): receipts to check (one tap "Looks right"), possible duplicates (Remove / Keep both), and bank charges with no receipt.
 - *Bank check* (bottom of Spending): upload a CSV export, a PDF statement, or screenshots of the banking app. Every charge is matched to a receipt by amount + date (+ store name). Charges with no receipt get "Add as expense" (with a category; "Always file this way" remembers a rule in the sheet's **Bank Rules** tab) or "Not spending" (transfers, card payments).
 - *Budget* tab: proposes a monthly budget per category from the last 3 months, editable, saved to the sheet's **Budgets** tab; shows left / over and "on pace for" live through the month.
+- *Recent* tab: what this phone has sent (60 days), what is still waiting, and anything the reader wants a decision on. The Snap tab is camera only, with a one-line strip underneath ("✓ Staples $60.87 filed · 2 to tag? ›") that opens Recent.
 
-**Tags (e.g. Homeschool)**
-- Camera → **🏷️ Tag** → pick *Homeschool*; it stays on for every snap until turned off (🏷️ → *No tag*). Already-filed receipt → tap it in Recent → **🏷️ Tag** (asks whether to file all its items as Homeschooling).
-- A tagged receipt gets: the tag in the Receipts and Items tabs (`Tag` column), its photo shortcut in Drive under **Household Receipts (photos) / Tagged / Homeschool**, and the reader is told the receipt is for home education so items land in the *Homeschooling* category.
-- Spending → *Tagged receipts* → Homeschool: total for the period, the items, and links to the Drive folder and the sheet — that's the reimbursement claim pack (filter the Items tab on Tag = Homeschool for the list).
-- More tags: add a row to the sheet's **Tags** tab (Tag, Category, Notes); the app picks it up on next refresh. Categories are editable in the **Categories** tab (*Homeschooling* was added).
+**Tags (e.g. Homeschool) and the reimbursement policy**
+- The sheet's **Tags** tab holds, per tag: the category claimed items go to, the claim rules (*Notes*), and **What counts / What does not count**. The Homeschool row carries the 2026–27 WISDOM / Gilbertine funding policy, distilled. The receipt reader gets these with every receipt, so it flags claimable lines even when nobody tagged the receipt — edit the text there and the reader follows it from the next receipt on.
+- A flagged receipt shows **Homeschool?** in Recent and under Spending → *Needs a look* → "Could be Homeschool", with the lines it thinks qualify. **Tag as Homeschool** opens a checklist (flagged lines pre-ticked) — tick what you are claiming and save: those lines go to the *Homeschooling* category and onto the claim list, the rest keep their categories. **Not Homeschool** waves the hint off on every phone.
+- Camera → **🏷️ Tag** → pick a tag; it stays on for every snap until turned off (🏷️ → *No tag*). The reader then claims the lines that fit the rules (everything, if it can't tell). Already-filed receipt → tap it → **🏷️ Tag / Change tag** → the same checklist.
+- A tagged receipt gets: the tag on the Receipts row, the `Tag` mark on each claimed line in Items (`Tag Hint` is what the reader suggested), and its photo shortcut in Drive under **Household Receipts (photos) / Tagged / Homeschool**.
+- Spending → *Tagged receipts* → Homeschool: the claim total (ticked lines, before tax), the claim rules, the lines, and links to the Drive folder and the sheet — that's the reimbursement pack (filter the Items tab on Tag = Homeschool for the itemized list; cross off unclaimed lines on the printed photo, as the policy asks).
+- More tags: 🏷️ Tag → **＋ New tag…** (name, category for the claimed items, optional what-counts notes) — it gets its own Drive folder and the reader starts flagging for it too. Rows can also be added or edited in the **Tags** tab; categories in the **Categories** tab.
 
 **Duplicates**
 - Same photo twice: caught on the phone and on the server (hash).
 - Same purchase from two phones or a photo + a screenshot: same store, date and total → if the printed time matches or the items match, it is filed as `duplicate` (not counted, "Keep both" undoes); if it can't be sure, it is counted but flagged "possible duplicate".
 
-**Sheet tabs** — Receipts, Tags, Items, Bank, Bank Rules, Budgets, Categories (editable), Log.
+**Sheet tabs** — Receipts, Tags (editable: tag, category, claim rules, what counts / what does not count), Items, Bank, Bank Rules, Budgets, Categories (editable), Log.
 Receipts with Source = `bank` are expenses filed from a statement; `superseded` means a real receipt replaced one later.
 
 **Script properties** — `ANTHROPIC_API_KEY` (required), `CLAUDE_MODEL` (default claude-sonnet-5-5), `CLAUDE_THINKING` (`off` = no up-front thinking, the default; `adaptive` if receipts keep getting misread), `CLAUDE_EFFORT` (`medium` default; `low` / `high`). `APP_TOKEN`, `SPREADSHEET_ID`, `FOLDER_ID` are set by `setup`.

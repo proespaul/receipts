@@ -86,6 +86,21 @@ ul.list{list-style:none;margin:0;padding:0}
 .badge.ok{background:var(--accent-soft);color:var(--accent)}
 .badge.bad{background:var(--danger-soft);color:var(--danger)}
 .badge.blue{background:var(--blue-soft);color:var(--blue)}
+.badge.hint{background:var(--blue-soft);color:var(--blue);border:1px dashed var(--blue)}
+.hintbox{background:var(--blue-soft);color:var(--blue);border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px}
+.hintbox b{font-weight:700}
+.hintbox .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.hintbox .acts .btn{min-height:34px;padding:5px 11px;font-size:13px}
+.strip{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 14px;margin:12px 0;font-size:14px;cursor:pointer}
+.strip .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.strip .r{color:var(--muted);white-space:nowrap;font-size:13px}
+.chk{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+.chk:last-child{border-bottom:0}
+.chk input{width:22px;height:22px;flex:none;accent-color:var(--accent)}
+.chk label{flex:1;min-width:0;display:flex;justify-content:space-between;gap:10px}
+.chk label span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chk .why{display:block;font-size:12px;color:var(--blue);font-weight:600}
+.lines .th{color:var(--blue);font-size:12px;margin-left:6px;font-weight:600}
 .lines{margin:10px 0 0;padding:10px 0 0;border-top:1px dashed var(--line);font-size:14px}
 .lines div{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
 .lines div span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -129,6 +144,9 @@ ul.list{list-style:none;margin:0;padding:0}
 .picker .opt{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:var(--bg);border-radius:12px;padding:14px;font-weight:650;margin-top:8px;text-align:left}
 .picker .opt.on{background:var(--blue-soft);color:var(--blue)}
 .picker .opt .sub{display:block;font-weight:500;font-size:12px;color:var(--muted)}
+.picker .opt.add{background:none;border:1.5px dashed var(--line);color:var(--accent)}
+.picker .box{max-height:88vh;overflow:auto}
+.picker textarea.f{min-height:64px;resize:vertical;font:inherit}
 .camoff{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;color:#fff;text-align:center}
 .camoff .btn{width:100%;max-width:320px}
 .camoff .why{font-size:13px;opacity:.85}
@@ -277,6 +295,11 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 
     <div id="setupNotice" class="notice hidden">Not connected yet. Files are saved on this phone — open <b>More</b> to connect them to the sheet.</div>
     <div id="whoNotice" class="notice hidden" data-act="goto" data-view="settings" role="button">👋 Whose phone is this? Tap to choose your name so the sheet knows who snapped what.</div>
+    <div id="snapStrip" class="strip hidden" data-act="goto" data-view="recent" role="button"></div>
+  </section>
+
+  <!-- RECENT -->
+  <section id="view-recent" class="hidden">
     <div id="queueBlock" class="hidden">
       <div class="row"><h2>Waiting to send <span id="queueCount"></span></h2><button class="btn quiet small" id="sendNowBtn">Send now</button></div>
       <ul class="list" id="queueList"></ul>
@@ -285,6 +308,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       <h2>Recent</h2>
       <ul class="list" id="recentList"></ul>
       <div id="recentEmpty" class="empty hidden">No receipts yet. Snap the first one.</div>
+      <p class="tiny muted" style="margin:14px 4px 0">Receipts stay here for 60 days; the sheet keeps them all. Tap one to see its lines, tag it, or open the photo.</p>
     </div>
   </section>
 
@@ -370,7 +394,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 </main>
 
 <nav class="tabs">
-  <button data-view="snap" class="on"><span class="i">📷</span>Snap<span class="dot hidden" id="queueDot"></span></button>
+  <button data-view="snap" class="on"><span class="i">📷</span>Snap</button>
+  <button data-view="recent"><span class="i">🧾</span>Recent<span class="dot hidden" id="queueDot"></span></button>
   <button data-view="spend"><span class="i">📊</span>Spending<span class="dot hidden" id="attDot"></span></button>
   <button data-view="budget"><span class="i">🎯</span>Budget</button>
   <button data-view="settings"><span class="i">⋯</span>More</button>
@@ -385,7 +410,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 (function () {
   'use strict';
   const C = window.ReceiptsCore;
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
   // Pre-set connection so nobody has to type anything. More → Connection can still override.
   const DEFAULTS = { url: 'https://script.google.com/macros/s/AKfycbwmez6dyUMTubrqBMnQ6ehYslyQbhS6mXGPGBAP5OJ8P4sU_OsZZJEDba2sKaIT5amI/exec', token: 'prairie482' };
   const $ = function (id) { return document.getElementById(id); };
@@ -447,7 +472,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       if (/[?&]shared=/.test(location.search)) history.replaceState(null, '', location.pathname);
       const inbox = await C.inboxAll();
       if (!inbox.length) return;
-      showView('snap');
+      showView('recent');
       let added = 0, dups = 0;
       for (const entry of inbox) {
         try {
@@ -484,7 +509,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     $('zoomRange').addEventListener('change', function () { setZoom(Number($('zoomRange').value), true); });
     $('zoomChips').addEventListener('click', function (e) { const b = e.target.closest('.zchip'); if (b) setZoom(Number(b.dataset.z), true); });
     $('sendNowBtn').addEventListener('click', function () { kickSync(true); });
-    $('syncAllBtn').addEventListener('click', function () { kickSync(true); showView('snap'); });
+    $('syncAllBtn').addEventListener('click', function () { kickSync(true); showView('recent'); });
     $('refreshBtn').addEventListener('click', function () { state.summaryStale = true; showView('spend'); });
     $('updateBtn').addEventListener('click', checkForUpdate);
     $('clearDoneBtn').addEventListener('click', clearDone);
@@ -522,13 +547,14 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 
   function showView(v) {
     state.view = v;
-    ['snap', 'spend', 'budget', 'settings'].forEach(function (k) { $('view-' + k).classList.toggle('hidden', k !== v); });
+    ['snap', 'recent', 'spend', 'budget', 'settings'].forEach(function (k) { $('view-' + k).classList.toggle('hidden', k !== v); });
     document.querySelectorAll('nav.tabs button').forEach(function (b) { b.classList.toggle('on', b.dataset.view === v); });
-    $('hdrTitle').textContent = v === 'spend' ? 'Spending' : (v === 'budget' ? 'Budget' : (v === 'settings' ? 'More' : 'Receipts'));
+    $('hdrTitle').textContent = v === 'spend' ? 'Spending' : (v === 'budget' ? 'Budget' : (v === 'settings' ? 'More' : (v === 'recent' ? 'Recent' : 'Receipts')));
     closeSheet();
     window.scrollTo(0, 0);
     if (v === 'snap') { if (state.cfg && state.cfg.camOnOpen && !state.cam.off && !likelyDesktop()) startCamera(); }
     else stopCamera();
+    if (v === 'recent') { renderRecords(); maybeRefreshSummary(); }
     if (v === 'spend') { renderSpend(); maybeRefreshSummary(); }
     if (v === 'budget') { renderBudget(); maybeRefreshSummary(); }
   }
@@ -643,33 +669,137 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     $('pickerOpts').innerHTML = tags.map(function (t) {
       return '<button class="opt' + (cur === t.name ? ' on' : '') + '" data-tag="' + esc(t.name) + '"><span>🏷️ ' + esc(t.name) + (t.category ? '<span class="sub">items go to ' + esc(t.category) + '</span>' : '') + '</span>' + (cur === t.name ? '<span>✓</span>' : '') + '</button>';
     }).join('') + '<button class="opt' + (!cur ? ' on' : '') + '" data-tag=""><span>No tag</span>' + (!cur ? '<span>✓</span>' : '') + '</button>' +
-      '<div class="tiny muted" style="margin-top:10px">Add more tags in the sheet\'s Tags tab.</div>';
+      '<button class="opt add" data-tag="__new"><span>＋ New tag…<span class="sub">e.g. Farm, PRO Electrical, a trip — gets its own folder and claim list</span></span></button>';
     $('pickerOpts').querySelectorAll('.opt').forEach(function (b) {
       b.addEventListener('click', async function () {
         const tag = b.dataset.tag;
-        closePicker();
-        if (!receiptId) { state.cam.tag = tag; renderTagBtn(); if (tag) toast('Tagging new receipts as ' + tag); return; }
-        await tagReceipt(receiptId, tag);
+        if (tag === '__new') { openNewTagForm(function (name) { pickTag(receiptId, name); }); return; }
+        pickTag(receiptId, tag);
       });
     });
     $('picker').classList.remove('hidden');
   }
+  function pickTag(receiptId, tag) {
+    closePicker();
+    if (!receiptId) { state.cam.tag = tag; renderTagBtn(); if (tag) toast('Tagging new receipts as ' + tag); return; }
+    if (!tag) { tagReceipt(receiptId, '', null); return; }
+    openTagItems(receiptId, tag);
+  }
   function closePicker() { $('picker').classList.add('hidden'); }
-  async function tagReceipt(receiptId, tag) {
+
+  /** "＋ New tag": name, category, and what counts — saved to the sheet's Tags tab from here. */
+  function openNewTagForm(onCreated) {
+    const cats = (state.summary && state.summary.categories) || [];
+    $('pickerTitle').textContent = 'New tag';
+    $('pickerSub').textContent = 'A tag collects receipts for one purpose: its photos go in a Drive folder and its items make a claim list. Tell the reader what counts and it will flag likely receipts for you.';
+    $('pickerOpts').innerHTML =
+      '<label class="f" for="ntName">Name</label><input class="f" id="ntName" maxlength="30" autocomplete="off" placeholder="e.g. Farm">' +
+      '<label class="f" for="ntCat">Category for the claimed items</label><select class="f" id="ntCat"><option value="__same">Same as the tag name (new category)</option><option value="">Keep whatever the reader picks</option>' + cats.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('') + '</select>' +
+      '<label class="f" for="ntCounts">What counts (optional — the reader uses this to flag receipts)</label><textarea class="f" id="ntCounts" placeholder="e.g. fence supplies, feed, mineral, vet bills, anything for the cattle"></textarea>' +
+      '<label class="f" for="ntNot">What does not count (optional)</label><textarea class="f" id="ntNot" placeholder="e.g. groceries, fuel for the truck"></textarea>' +
+      '<div class="stack" style="margin-top:12px"><button class="btn primary" id="ntSave">Save tag</button></div>';
+    $('ntSave').addEventListener('click', async function () {
+      const name = $('ntName').value.trim();
+      if (!name) { toast('Give the tag a name'); $('ntName').focus(); return; }
+      const catSel = $('ntCat').value;
+      const category = catSel === '__same' ? name : catSel;
+      $('ntSave').disabled = true;
+      const res = await postAction({ action: 'tag_create', name: name, category: category, counts: $('ntCounts').value.trim(), notCounts: $('ntNot').value.trim() });
+      $('ntSave').disabled = false;
+      if (!res) return;
+      if (state.summary) {
+        state.summary.tags = res.tags || state.summary.tags;
+        if (res.category && state.summary.categories.indexOf(res.category) < 0) state.summary.categories.splice(Math.max(0, state.summary.categories.indexOf('Other')), 0, res.category);
+      }
+      toast('Tag "' + res.tag + '" added');
+      state.summaryStale = true;
+      if (onCreated) onCreated(res.tag);
+    });
+    setTimeout(function () { $('ntName').focus(); }, 50);
+    $('picker').classList.remove('hidden');
+  }
+
+  /** The receipt's lines, from this phone's record if it has one, else from the spending feed. [{name, lineTotal, category, tag, tagHint}] */
+  function itemsFor(receiptId) {
+    const local = state.records.find(function (r) { return r.receiptId === receiptId && r.result && r.result.items && r.result.items.length; });
+    if (local) return local.result.items.map(function (it) { return { name: it.name, lineTotal: it.lineTotal, category: it.category, tag: it.tag || '', tagHint: it.tagHint || '' }; });
+    const s = state.summary;
+    const idx = s && s._byId ? s._byId[receiptId] : -1;
+    if (idx == null || idx < 0) return [];
+    return (s._itemsByR[idx] || []).map(function (it) { return { name: it[1], lineTotal: it[3], category: s.categories[it[4]] || '', tag: it[5] || '', tagHint: it[6] || '' }; });
+  }
+
+  /** Which lines are for the tag? Pre-ticked from the reader's flags; the whole receipt when it flagged nothing. */
+  function openTagItems(receiptId, tag) {
+    const info = tagInfo(tag) || { name: tag, category: '' };
+    const items = itemsFor(receiptId);
+    if (!items.length) { tagReceipt(receiptId, tag, null); return; }
+    const flagged = items.some(function (it) { return it.tag === tag || it.tagHint === tag || (info.category && it.category === info.category); });
+    $('pickerTitle').textContent = 'Which lines are for ' + tag + '?';
+    $('pickerSub').textContent = (info.category ? 'Ticked lines go to the ' + info.category + ' category and onto the claim list. ' : 'Ticked lines go onto the claim list. ') + 'The receipt photo goes in the ' + tag + ' folder either way.';
+    $('pickerOpts').innerHTML = '<div class="row small" style="margin:8px 0 2px"><span class="muted">' + items.length + (items.length === 1 ? ' line' : ' lines') + '</span><span style="display:flex;gap:6px"><button class="btn small quiet" id="tiAll">All</button><button class="btn small quiet" id="tiNone">None</button></span></div>' +
+      items.map(function (it, i) {
+        const on = flagged ? (it.tag === tag || it.tagHint === tag || (info.category && it.category === info.category)) : true;
+        const why = it.tagHint === tag ? '<span class="why">fits the ' + esc(tag) + ' rules</span>' : '';
+        return '<div class="chk"><input type="checkbox" id="ti' + i + '" data-i="' + i + '"' + (on ? ' checked' : '') + '><label for="ti' + i + '"><span>' + esc(it.name) + why + '</span><span>' + money(it.lineTotal) + '</span></label></div>';
+      }).join('') +
+      '<div class="stack" style="margin-top:12px"><button class="btn primary" id="tiSave">🏷️ Tag as ' + esc(tag) + '</button></div>';
+    $('tiAll').addEventListener('click', function () { $('pickerOpts').querySelectorAll('input[type=checkbox]').forEach(function (c) { c.checked = true; }); });
+    $('tiNone').addEventListener('click', function () { $('pickerOpts').querySelectorAll('input[type=checkbox]').forEach(function (c) { c.checked = false; }); });
+    $('tiSave').addEventListener('click', async function () {
+      const picked = Array.prototype.map.call($('pickerOpts').querySelectorAll('input[type=checkbox]:checked'), function (c) { return Number(c.dataset.i); });
+      $('tiSave').disabled = true;
+      closePicker();
+      await tagReceipt(receiptId, tag, picked);
+    });
+    $('picker').classList.remove('hidden');
+  }
+
+  /** picked = line indexes to claim; null = let the backend decide (reader's flags, or everything) */
+  async function tagReceipt(receiptId, tag, picked) {
     const info = tag ? tagInfo(tag) : null;
-    let applyCategory = false;
-    if (info && info.category) applyCategory = confirm('Also file every item on this receipt under "' + info.category + '"?\n\nOK = yes, all items. Cancel = just tag the receipt and keep the item categories as read.');
-    const res = await postAction({ action: 'tag', receiptId: receiptId, tag: tag, applyCategory: applyCategory });
+    const payload = { action: 'tag', receiptId: receiptId, tag: tag };
+    if (tag && picked) payload.items = picked;
+    const res = await postAction(payload);
     if (!res) return;
-    for (const r of state.records) { if (r.receiptId === receiptId && r.result) { r.result.tag = tag; if (applyCategory && info) (r.result.items || []).forEach(function (it) { it.category = info.category; }); await C.putRecord(r); } }
-    if (state.summary) {
-      const idx = state.summary._byId ? state.summary._byId[receiptId] : -1;
-      if (idx >= 0) { const r = state.summary.receipts[idx]; if (tag) r.tg = tag; else delete r.tg; }
+    const serverItems = res.items || null;
+    for (const r of state.records) {
+      if (r.receiptId !== receiptId || !r.result) continue;
+      r.result.tag = tag; r.result.tagHint = '';
+      if (serverItems && serverItems.length === (r.result.items || []).length) r.result.items.forEach(function (it, i) { it.category = serverItems[i].category; it.tag = serverItems[i].tag || ''; });
+      else (r.result.items || []).forEach(function (it, i) { const on = !!tag && (!picked || picked.indexOf(i) >= 0); it.tag = on ? tag : ''; if (on && info && info.category) it.category = info.category; });
+      await C.putRecord(r);
     }
-    toast(tag ? 'Tagged ' + tag : 'Tag removed');
+    if (state.summary) {
+      const s = state.summary;
+      const idx = s._byId ? s._byId[receiptId] : -1;
+      if (idx >= 0) {
+        const r = s.receipts[idx]; if (tag) r.tg = tag; else delete r.tg; delete r.th;
+        const its = s._itemsByR[idx] || [];
+        its.forEach(function (it, i) {
+          const srv = serverItems && serverItems.length === its.length ? serverItems[i] : null;
+          const on = srv ? !!srv.tag : (!!tag && (!picked || picked.indexOf(i) >= 0));
+          it[5] = on ? tag : '';
+          if (on && info && info.category) { let ci = s.categories.indexOf(info.category); if (ci < 0) { s.categories.push(info.category); ci = s.categories.length - 1; } it[4] = ci; }
+        });
+      }
+    }
+    toast(tag ? 'Tagged ' + tag + (res.claimed != null ? ' — ' + res.claimed + (res.claimed === 1 ? ' line' : ' lines') + ' on the claim list' : '') : 'Tag removed');
     state.summaryStale = true;
-    await refreshRecords(); if (state.view === 'spend') renderSpend(); maybeRefreshSummary(true);
+    await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot(); maybeRefreshSummary(true);
     if (!$('sheet').classList.contains('hidden') && state.summary && state.summary._byId && state.summary._byId[receiptId] >= 0) openReceipt(state.summary._byId[receiptId]);
+  }
+
+  /** "Not a Homeschool receipt": the hint goes away on every phone. */
+  async function dismissHint(receiptId, btn) {
+    if (btn) btn.disabled = true;
+    const res = await postAction({ action: 'tag', receiptId: receiptId, dismiss: true });
+    if (btn) btn.disabled = false;
+    if (!res) return;
+    for (const r of state.records) { if (r.receiptId === receiptId && r.result) { r.result.tagHint = ''; await C.putRecord(r); } }
+    if (state.summary && state.summary._byId && state.summary._byId[receiptId] >= 0) delete state.summary.receipts[state.summary._byId[receiptId]].th;
+    toast('Okay — not tagged');
+    await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot();
   }
 
   /* ---- zoom: the lens's own zoom range, extended below 1× by switching to the wide lens when there is one ---- */
@@ -996,12 +1126,14 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const waiting = state.records.filter(function (r) { return r.status === 'pending' || r.status === 'uploading' || r.status === 'error'; });
     const done = state.records.filter(function (r) { return r.status === 'done' || r.status === 'rejected'; }).slice(0, 40);
 
+    const hints = done.filter(recordHint);
     $('queueBlock').classList.toggle('hidden', waiting.length === 0);
     $('queueCount').textContent = waiting.length ? '(' + waiting.length + ')' : '';
-    $('queueDot').classList.toggle('hidden', waiting.length === 0);
-    $('queueDot').textContent = waiting.length;
+    $('queueDot').classList.toggle('hidden', waiting.length + hints.length === 0);
+    $('queueDot').textContent = waiting.length + hints.length;
     $('setupNotice').classList.toggle('hidden', C.configReady(state.cfg));
     $('whoNotice').classList.toggle('hidden', !C.configReady(state.cfg) || !!(state.cfg && state.cfg.who));
+    renderSnapStrip(waiting, done, hints);
 
     $('queueList').innerHTML = waiting.map(function (r) {
       const actions = [];
@@ -1028,12 +1160,19 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       else if (r.duplicateStrength === 'possible') badge = '<span class="badge">duplicate?</span>';
       else if (rec.needsReview) badge = '<span class="badge">check</span>';
       const dup = r.duplicate ? '<span class="badge ok">already filed</span>' : '';
-      const tagB = rec.tag ? '<span class="badge blue">🏷️ ' + esc(rec.tag) + '</span>' : '';
+      const hint = recordHint(r);
+      const tagB = rec.tag ? '<span class="badge blue">🏷️ ' + esc(rec.tag) + '</span>' : (hint ? '<span class="badge hint">🏷️ ' + esc(hint) + '?</span>' : '');
       let lines = '';
+      if (hint && !open) {
+        const names = items.filter(function (it) { return it.tagHint === hint; }).map(function (it) { return it.name; });
+        lines = '<div class="hintbox"><b>Looks like a ' + esc(hint) + ' expense</b>' + (names.length ? ': ' + esc(names.slice(0, 3).join(', ')) + (names.length > 3 ? ' +' + (names.length - 3) + ' more' : '') : '') +
+          '<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.receiptId) + '" data-tag="' + esc(hint) + '">🏷️ Tag as ' + esc(hint) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.receiptId) + '">Not ' + esc(hint) + '</button></div></div>';
+      }
       if (open) {
         lines = '<div class="lines">' + items.map(function (it) {
           const q = (it.qty && it.qty !== 1) ? it.qty + ' × ' : '';
-          return '<div><span>' + esc(q + it.name) + '<span class="cat">' + esc(it.category || '') + '</span></span><span>' + money(it.lineTotal) + '</span></div>';
+          const mark = it.tag ? '<span class="th">🏷️</span>' : (hint && it.tagHint === hint ? '<span class="th">🏷️?</span>' : '');
+          return '<div><span>' + esc(q + it.name) + '<span class="cat">' + esc(it.category || '') + '</span>' + mark + '</span><span>' + money(it.lineTotal) + '</span></div>';
         }).join('') +
           (rec.gst != null && rec.gst !== '' ? '<div><span>GST</span><span>' + money(rec.gst) + '</span></div>' : '') +
           (rec.otherTax ? '<div><span>Other tax</span><span>' + money(rec.otherTax) + '</span></div>' : '') +
@@ -1042,6 +1181,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
           (r.duplicateStrength === 'strong' ? '<div class="muted small" style="display:block;margin-top:6px">Same purchase was already filed (' + esc(r.duplicateOf) + '), so this copy is not counted. <button class="btn small" data-act="keep" data-rid="' + esc(r.receiptId) + '">Keep both</button></div>' : '') +
           (r.duplicateStrength === 'possible' ? '<div class="muted small" style="display:block;margin-top:6px">Looks like it may already be filed. <button class="btn small" data-act="remove" data-rid="' + esc(r.receiptId) + '">Remove this copy</button> <button class="btn small" data-act="keep" data-rid="' + esc(r.receiptId) + '">Keep both</button></div>' : '') +
           (rec.needsReview && r.duplicateStrength !== 'possible' ? '<div class="muted small" style="display:block;margin-top:6px">⚠️ ' + esc(rec.reviewNotes || 'Please check this one') + ' <button class="btn small" data-act="review" data-rid="' + esc(r.receiptId) + '">Looks right</button></div>' : '') +
+          (hint ? '<div class="hintbox"><b>Looks like a ' + esc(hint) + ' expense</b> — the 🏷️? lines fit the claim rules.<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.receiptId) + '" data-tag="' + esc(hint) + '">🏷️ Tag as ' + esc(hint) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.receiptId) + '">Not ' + esc(hint) + '</button></div></div>' : '') +
           '<div style="display:block;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
           (r.receiptId ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.receiptId) + '" data-cur="' + esc(rec.tag || '') + '">🏷️ ' + (rec.tag ? 'Change tag' : 'Tag') + '</button>' : '') +
           (rec.photoUrl ? '<a class="btn small" href="' + esc(rec.photoUrl) + '" target="_blank" rel="noopener">Open in Drive</a>' : '') + '</div>' +
@@ -1056,6 +1196,29 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   function thumbHtml(r) {
     if (r.thumb) return '<img class="thumb" alt="" src="' + r.thumb + '">';
     return '<div class="thumb ph">' + (r.kind === 'pdf' ? '📄' : '🧾') + '</div>';
+  }
+
+  /** The tag the reader suggested for a filed-but-untagged receipt on this phone ('' once tagged or waved off). */
+  function recordHint(r) {
+    if (!r || r.status !== 'done' || !r.result || r.result.tag || r.duplicateStrength === 'strong') return '';
+    return r.result.tagHint || '';
+  }
+
+  /** One line under the camera: what just happened and what is waiting, tap → Recent. */
+  function renderSnapStrip(waiting, done, hints) {
+    const el = $('snapStrip');
+    const last = state.records.filter(function (r) { return r.status !== 'rejected'; })[0];
+    if (!last) { el.classList.add('hidden'); return; }
+    let left;
+    if (last.status === 'done') { const rec = last.result || {}; left = '✓ ' + (rec.store || 'Receipt') + (rec.total != null ? ' ' + money(rec.total) : '') + (last.duplicate ? ' (already filed)' : ' filed'); }
+    else if (last.status === 'uploading') left = '<span class="spin"></span>Reading the last receipt…';
+    else if (last.status === 'error') left = '⚠️ ' + (last.retryable ? 'Will retry the last one' : (last.lastError || 'Error'));
+    else left = navigator.onLine ? 'Queued — sending…' : 'Saved — sends when there is signal';
+    const bits = [];
+    if (waiting.length) bits.push(waiting.length + ' waiting');
+    if (hints.length) bits.push(hints.length + ' to tag?');
+    el.innerHTML = '<span class="l">' + left + '</span><span class="r">' + esc(bits.join(' · ')) + ' ›</span>';
+    el.classList.remove('hidden');
   }
 
   document.addEventListener('click', async function (e) {
@@ -1079,6 +1242,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (act === 'keep' || act === 'remove') { await resolveDup(el.dataset.rid, act === 'keep' ? 'keep' : 'remove', el); return; }
     if (act === 'review') { await markReviewed(el.dataset.rid, el); return; }
     if (act === 'tag') { openTagPicker(el.dataset.rid, el.dataset.cur || ''); return; }
+    if (act === 'hint-tag') { openTagItems(el.dataset.rid, el.dataset.tag); return; }
+    if (act === 'hint-no') { await dismissHint(el.dataset.rid, el); return; }
     if (act === 'bank-expense' || act === 'bank-ignore' || act === 'bank-undo' || act === 'bank-save' || act === 'bank-cancel') { await bankAction(act, el); return; }
     if (act === 'drill') { openDrill(el.dataset.kind, el.dataset.key); return; }
     if (act === 'receipt') { openReceipt(Number(el.dataset.idx)); return; }
@@ -1202,7 +1367,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (totals.autoExpense) parts.push(totals.autoExpense + ' filed by rule');
     state.bank.status = (parts.length ? parts.join(' · ') : 'Nothing new') + (totals.noReceipt ? ' · ' + totals.noReceipt + ' with no receipt' : '') + (totals.failed.length ? ' · ' + totals.failed.join('; ') : '');
     toast(totals.added ? 'Statement checked ✓' : (totals.failed.length ? 'Could not read that' : 'Nothing new in that statement'));
-    if (account) state.cfg = await C.setConfig({ bankAccount: '' });   // the name was for this upload only
+    if (account) { state.cfg = await C.setConfig({ bankAccount: '' }); const cur = $('bankAcct'); if (cur) cur.value = ''; }   // the name was for this upload only
     state.summaryStale = true;
     await maybeRefreshSummary(true);
     renderSpend();
@@ -1333,12 +1498,19 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   }
 
   function attention(s) {
-    if (!s) return { review: [], possible: [], removed: [], noReceipt: [], count: 0 };
+    if (!s) return { review: [], possible: [], removed: [], noReceipt: [], hints: [], count: 0 };
     const possible = s.receipts.filter(function (r) { return r.dup; });
     const review = s.receipts.filter(function (r) { return r.nr && !r.dup; });
     const removed = s.removedDups || [];
     const noReceipt = (s.bank && s.bank.noReceipt) || [];
-    return { review: review, possible: possible, removed: removed, noReceipt: noReceipt, count: review.length + possible.length + removed.length + noReceipt.length };
+    const hints = s.receipts.filter(function (r) { return r.th && !r.tg && !r.dup; }).sort(function (a, b) { return b.d.localeCompare(a.d); });
+    return { review: review, possible: possible, removed: removed, noReceipt: noReceipt, hints: hints, count: review.length + possible.length + removed.length + noReceipt.length + hints.length };
+  }
+  /** Names of the lines the reader flagged for the receipt's suggested tag (from the spending feed). */
+  function hintedNames(s, r) {
+    const idx = s._byId ? s._byId[r.id] : -1;
+    if (idx == null || idx < 0) return [];
+    return (s._itemsByR[idx] || []).filter(function (it) { return it[6] === r.th; }).map(function (it) { return it[1]; });
   }
   function renderAttDot() {
     const n = attention(state.summary).count;
@@ -1454,9 +1626,11 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     // ---- Bank check ----
     html += '<h2>Bank check</h2><div class="card" id="bankCard">' + bankCardHtml(s) + '</div>';
     if (s.sheetUrl) html += '<p class="small" style="text-align:center;margin:18px 0"><a href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open the Google Sheet</a></p>';
+    const typedAcct = body.querySelector('#bankAcct') ? body.querySelector('#bankAcct').value : null;   // a refresh must not wipe what is being typed
     body.innerHTML = html;
     body.querySelectorAll('svg.trend rect[data-key]').forEach(function (r) { r.addEventListener('click', function () { selectPeriod(r.dataset.key, r.dataset.mode); }); });
     const acct = body.querySelector('#bankAcct');
+    if (acct && typedAcct !== null) acct.value = typedAcct;
     if (acct) acct.addEventListener('change', async function () { state.cfg = await C.setConfig({ bankAccount: acct.value.trim() }); });
   }
 
@@ -1483,6 +1657,18 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
         }
         return '<div class="arow"><div class="t"><span><b>' + esc(prettyDesc(t.desc)) + '</b><br><span class="muted tiny">' + esc(t.d) + ' · ' + esc(t.acct) + '</span></span><b>' + money(t.amt) + '</b></div>' + acts + '</div>';
       }).join('') + more('bank', att.noReceipt.length);
+    }
+    if (att.hints.length) {
+      const byTag = {};
+      att.hints.forEach(function (r) { (byTag[r.th] = byTag[r.th] || []).push(r); });
+      Object.keys(byTag).forEach(function (tag) {
+        const list = byTag[tag];
+        h += '<h2 style="margin-top:8px">Could be ' + esc(tag) + ' · ' + list.length + '</h2>' + cut('hint:' + tag, list).map(function (r) {
+          const names = hintedNames(s, r);
+          return '<div class="arow"><div class="t"><span><b>' + esc(r.s) + '</b><br><span class="muted tiny">' + esc(r.d) + (names.length ? ' · ' + esc(names.slice(0, 3).join(', ')) + (names.length > 3 ? ' +' + (names.length - 3) : '') : '') + '</span></span><b>' + money(r.t) + '</b></div>' +
+            '<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.id) + '" data-tag="' + esc(tag) + '">🏷️ Tag as ' + esc(tag) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.id) + '">Not ' + esc(tag) + '</button>' + photoLink(r) + '</div></div>';
+        }).join('') + more('hint:' + tag, list.length);
+      });
     }
     if (att.possible.length) {
       h += '<h2 style="margin-top:8px">Possible duplicates</h2>' + att.possible.map(function (r) {
@@ -1616,12 +1802,22 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     } else if (kind === 'tag') {
       const agg = aggregate(s, function (r) { return inP(r) && r.tg === key; });
       const info = tagInfo(key);
-      html += '<div class="card"><div class="muted small">' + esc(labelFor(pk, mode)) + ' · tagged ' + esc(key) + '</div><div class="bigtotal">' + money(agg.total) + '</div><div class="small muted">' + agg.count + (agg.count === 1 ? ' receipt' : ' receipts') + (info && info.category ? ' · ' + money(agg.byCategory.filter(function (c) { return c.name === info.category; }).reduce(function (a, c) { return a + c.total; }, 0)) + ' in ' + esc(info.category) : '') + '</div>' +
+      // the claim list: lines marked with this tag (older receipts without line marks fall back to all their lines)
+      const claimed = []; let claimTotal = 0, unmarked = 0;
+      agg.idxs.forEach(function (i) {
+        const its = s._itemsByR[i] || [];
+        const marked = its.filter(function (it) { return it[5] === key; });
+        const use = marked.length ? marked : its;
+        if (!marked.length && its.length) unmarked++;
+        use.forEach(function (it) { claimed.push(it); claimTotal += it[3]; });
+      });
+      claimTotal = r2(claimTotal);
+      html += '<div class="card"><div class="muted small">' + esc(labelFor(pk, mode)) + ' · tagged ' + esc(key) + '</div><div class="bigtotal">' + money(claimTotal) + '</div><div class="small muted">' + claimed.length + (claimed.length === 1 ? ' line' : ' lines') + ' to claim, before tax · ' + agg.count + (agg.count === 1 ? ' receipt' : ' receipts') + ' totalling ' + money(agg.total) + '</div>' +
         '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' + (info && info.folder ? '<a class="btn small tint" href="' + esc(info.folder) + '" target="_blank" rel="noopener">📁 Open the ' + esc(key) + ' folder in Drive</a>' : '') + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') + '</div>' +
-        '<div class="tiny muted" style="margin-top:8px">For a claim: the Drive folder has the receipt photos; the sheet\'s Items tab filtered on Tag = ' + esc(key) + ' is the itemized list.</div></div>';
-      if (agg.byCategory.length) html += '<h2>What</h2><div class="card">' + barsHtml(agg.byCategory, agg.total, 8, false, '') + '</div>';
-      const items = topItems(s, agg.idxs, 60);
-      if (items.length) html += '<h2>Items</h2><div class="card"><ul class="toplist">' + items.map(function (it) { return '<li><span class="n">' + esc(it.name) + '</span><span class="c">' + (it.count > 1 ? '×' + it.count : '') + '</span><span class="t">' + money(it.total) + '</span></li>'; }).join('') + '</ul></div>';
+        '<div class="tiny muted" style="margin-top:8px">For a claim: the Drive folder has the receipt photos; the sheet\'s Items tab filtered on Tag = ' + esc(key) + ' is the itemized list.' + (unmarked ? ' ' + unmarked + (unmarked === 1 ? ' receipt has' : ' receipts have') + ' no lines marked yet, so all its lines are counted — tap it and Change tag to pick.' : '') + '</div></div>';
+      if (info && info.notes) html += '<h2>Claim rules</h2><div class="card small">' + esc(info.notes).replace(/\. /g, '.<br>') + '</div>';
+      if (info && (info.counts || info.notCounts)) html += '<h2>What the reader looks for</h2><div class="card small">' + (info.counts ? '<b class="good">Counts:</b> ' + esc(info.counts) : '') + (info.notCounts ? '<div style="margin-top:8px"><b class="bad">Does not count:</b> ' + esc(info.notCounts) + '</div>' : '') + '<div class="tiny muted" style="margin-top:8px">Edit these in the sheet\'s Tags tab; the reader uses them on every receipt.</div></div>';
+      if (claimed.length) html += '<h2>Claim lines</h2><div class="card"><ul class="toplist">' + claimed.sort(function (a, b) { return s.receipts[b[0]].d.localeCompare(s.receipts[a[0]].d); }).slice(0, 80).map(function (it) { return '<li data-act="receipt" data-idx="' + it[0] + '"><span class="n">' + esc(it[1]) + '<span class="muted tiny"> · ' + esc(s.receipts[it[0]].s) + ' ' + esc(s.receipts[it[0]].d.slice(5)) + '</span></span><span class="t">' + money(it[3]) + '</span></li>'; }).join('') + '</ul></div>';
       html += '<h2>Receipts</h2>' + receiptListHtml(s, agg.idxs);
     } else if (kind === 'store') {
       const agg = aggregate(s, function (r) { return inP(r) && r.s === key; });
@@ -1640,17 +1836,18 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     return '<ul class="list">' + list.map(function (i) {
       const r = s.receipts[i];
       const amt = ci != null ? r.c[ci] : r.t;
-      return '<li class="item" data-act="receipt" data-idx="' + i + '"><div class="thumb ph">' + (r.src === 'pdf' ? '📄' : (r.src === 'bank' ? '🏦' : '🧾')) + '</div><div class="body"><div class="title"><span>' + esc(r.s) + (r.nr ? '<span class="badge">check</span>' : '') + (r.tg ? '<span class="badge blue">🏷️ ' + esc(r.tg) + '</span>' : '') + '</span><span class="amt">' + money(amt) + (ci != null && Math.abs(amt - r.t) > 0.01 ? ' <span class="muted tiny">of ' + money(r.t) + '</span>' : '') + '</span></div><div class="sub">' + esc(r.d) + ' · ' + r.n + (r.n === 1 ? ' item' : ' items') + ' · ' + esc(s.whos[r.w] || '') + (r.bm ? ' · <span class="good">bank ✓</span>' : (r.pay && /cash/i.test(r.pay) ? ' · cash' : '')) + '</div></div></li>';
+      return '<li class="item" data-act="receipt" data-idx="' + i + '"><div class="thumb ph">' + (r.src === 'pdf' ? '📄' : (r.src === 'bank' ? '🏦' : '🧾')) + '</div><div class="body"><div class="title"><span>' + esc(r.s) + (r.nr ? '<span class="badge">check</span>' : '') + (r.tg ? '<span class="badge blue">🏷️ ' + esc(r.tg) + '</span>' : (r.th ? '<span class="badge hint">🏷️ ' + esc(r.th) + '?</span>' : '')) + '</span><span class="amt">' + money(amt) + (ci != null && Math.abs(amt - r.t) > 0.01 ? ' <span class="muted tiny">of ' + money(r.t) + '</span>' : '') + '</span></div><div class="sub">' + esc(r.d) + ' · ' + r.n + (r.n === 1 ? ' item' : ' items') + ' · ' + esc(s.whos[r.w] || '') + (r.bm ? ' · <span class="good">bank ✓</span>' : (r.pay && /cash/i.test(r.pay) ? ' · cash' : '')) + '</div></div></li>';
     }).join('') + '</ul>';
   }
 
   function openReceipt(idx) {
     const s = state.summary; const r = s.receipts[idx]; if (!r) return;
     const items = s._itemsByR[idx] || [];
-    let html = '<div class="card"><div class="row"><div><b>' + esc(r.s) + '</b>' + (r.tg ? '<span class="badge blue">🏷️ ' + esc(r.tg) + '</span>' : '') + '<div class="muted small">' + esc(r.d) + ' · ' + esc(s.whos[r.w] || '') + (r.pay ? ' · ' + esc(r.pay) : '') + '</div></div><div class="bigtotal" style="font-size:28px">' + money(r.t) + '</div></div>';
+    let html = '<div class="card"><div class="row"><div><b>' + esc(r.s) + '</b>' + (r.tg ? '<span class="badge blue">🏷️ ' + esc(r.tg) + '</span>' : (r.th ? '<span class="badge hint">🏷️ ' + esc(r.th) + '?</span>' : '')) + '<div class="muted small">' + esc(r.d) + ' · ' + esc(s.whos[r.w] || '') + (r.pay ? ' · ' + esc(r.pay) : '') + '</div></div><div class="bigtotal" style="font-size:28px">' + money(r.t) + '</div></div>';
     if (items.length) {
-      html += '<div class="lines">' + items.map(function (it) { return '<div><span>' + esc((it[2] && it[2] !== 1 ? it[2] + ' × ' : '') + it[1]) + '<span class="cat">' + esc(s.categories[it[4]] || '') + '</span></span><span>' + money(it[3]) + '</span></div>'; }).join('') + '</div>';
+      html += '<div class="lines">' + items.map(function (it) { const mark = it[5] ? '<span class="th">🏷️</span>' : (r.th && it[6] === r.th ? '<span class="th">🏷️?</span>' : ''); return '<div><span>' + esc((it[2] && it[2] !== 1 ? it[2] + ' × ' : '') + it[1]) + '<span class="cat">' + esc(s.categories[it[4]] || '') + '</span>' + mark + '</span><span>' + money(it[3]) + '</span></div>'; }).join('') + '</div>';
     } else html += '<div class="muted small" style="margin-top:8px">' + (r.src === 'bank' ? 'Filed from the bank statement (no receipt).' : 'Line items are kept for the last 15 months.') + '</div>';
+    if (r.th && !r.tg) html += '<div class="hintbox"><b>Looks like a ' + esc(r.th) + ' expense</b> — the 🏷️? lines fit the claim rules.<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.id) + '" data-tag="' + esc(r.th) + '">🏷️ Tag as ' + esc(r.th) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.id) + '">Not ' + esc(r.th) + '</button></div></div>';
     if (r.nr) html += '<div class="notice">⚠️ ' + esc(r.rn || 'Please check this one') + ' <button class="btn small" data-act="review" data-rid="' + esc(r.id) + '">Looks right</button></div>';
     if (r.bm) html += '<div class="small good" style="margin-top:8px">✓ Matched to a bank charge</div>';
     html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' + (r.src !== 'bank' ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.id) + '" data-cur="' + esc(r.tg || '') + '">🏷️ ' + (r.tg ? 'Change tag' : 'Tag') + '</button>' : '') + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') + '</div></div>';
@@ -2000,7 +2197,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   }
 
   // expose a little for tests
-  window.__receipts = { state: state, refreshRecords: refreshRecords, runSync: runSync, renderSpend: renderSpend, renderBudget: renderBudget, prepareImage: prepareImage, sliceTall: sliceTall, prepareParts: prepareParts, drainInbox: drainInbox, keyFor: keyFor, shiftKey: shiftKey, daysInKey: daysInKey, aggregate: aggregate, proposeBudget: proposeBudget, showView: showView, selectPeriod: selectPeriod, maybeRefreshSummary: maybeRefreshSummary, openDrill: openDrill, startCamera: startCamera, capture: capture, setZoom: setZoom, setupZoom: setupZoom, openTagPicker: openTagPicker, tagList: tagList };
+  window.__receipts = { state: state, refreshRecords: refreshRecords, runSync: runSync, renderSpend: renderSpend, renderBudget: renderBudget, prepareImage: prepareImage, sliceTall: sliceTall, prepareParts: prepareParts, drainInbox: drainInbox, keyFor: keyFor, shiftKey: shiftKey, daysInKey: daysInKey, aggregate: aggregate, proposeBudget: proposeBudget, showView: showView, selectPeriod: selectPeriod, maybeRefreshSummary: maybeRefreshSummary, openDrill: openDrill, startCamera: startCamera, capture: capture, setZoom: setZoom, setupZoom: setupZoom, openTagPicker: openTagPicker, tagList: tagList, openTagItems: openTagItems, recordHint: recordHint, attention: attention };
 })();
 </script>
 </body>

@@ -1,5 +1,5 @@
 /**
- * Household Receipts — Apps Script backend  (v1.1)
+ * Household Receipts — Apps Script backend  (v1.2)
  * ---------------------------------------------------------------
  * The phone app posts receipts here (photos, long screenshots cut into slices,
  * or PDF receipts). This script:
@@ -44,9 +44,39 @@ const CONFIG = {
     'Utilities & Bills', 'Phone & Internet', 'Insurance', 'Subscriptions & Memberships',
     'Bank Fees & Interest', 'Homeschooling', 'Other'
   ],
-  // Tags a receipt can be marked with in the app (editable in the Tags tab): tag → category the reader favours
+  // Tags a receipt can be marked with in the app (editable in the Tags tab; the app can add more):
+  // [tag, category the claimed items go to, claim notes shown in the app, what counts, what does not count]
+  // "What counts" / "What does not count" are read to the receipt reader with every receipt, so it can flag
+  // items that look claimable even when nobody tagged the receipt.
   TAGS: [
-    ['Homeschool', 'Homeschooling', 'Receipts to claim for home education funding']
+    ['Homeschool', 'Homeschooling',
+      'Reimbursed from the Parent Funding Account ($928.03 per funded grade 1–12 student, $464.01 per kindergarten student; WISDOM / Gilbertine Institute 2026–27 policy). ' +
+      'The receipt must be itemized and show the vendor name and contact info, in Canadian dollars, with proof of payment (a paid status — not an order confirmation). ' +
+      'Cross off items you are not claiming (do not highlight). Tax and shipping on eligible items are refundable. ' +
+      'Items must fit the student\'s Education Program Plan (EPP); instruments, telescopes/microscopes, cameras, tools, PE equipment, sewing machine and Guides/Scouts/4H must be named in the EPP. ' +
+      '26/27 funding covers purchases from January 1, 2026; year-specific items (lessons, classes, internet, passes, subscriptions, admissions) only from June 2026. ' +
+      'Send receipts by the last business day of the month to be refunded by EFT at the end of the next month (May receipts → July 15; after May 31 → end of October). ' +
+      'One desktop/laptop/tablet per family per school year.',
+      // What counts
+      'Books: textbooks, workbooks, resource books, reading books, music books, teacher guides and answer keys, parent resources. ' +
+      'Consumables and supplies: paper, pens, pencils, notebooks, craft supplies, printer paper and ink, photocopying, planners, organizational bins and totes (workboxing), whiteboard/blackboard/corkboard. ' +
+      'Learning aids and manipulatives (Math-U-See blocks, Lego), board games (Catan, Ticket to Ride, chess), project materials that fit the program (play-dough, clay, glue, building blocks, fabric, science-project materials, dissection kits, a small amount of seeds for experiments). ' +
+      'Audio/video: instructional DVDs and CDs, Audible and Kindle subscriptions, audiobooks (Yoto cards and players), documentaries and clearly educational DVDs. ' +
+      'Technology: one desktop, laptop or tablet per family per school year (digital calendars such as Skylight count toward it), Kindle or e-reader, monitor, DVD player, printer and ink, educational software. ' +
+      'Learning services (year-specific, June 2026 onward): online learning programs and correspondence courses, tutoring by a non-family expert, lessons and classes (group or private — swimming, art, music, dance, language), professional-development workshops, fitness centre passes and classes, 50% of the monthly internet bill when itemized. ' +
+      'Admissions and field trips (year-specific): museum, science centre, zoo, theatre tickets for literature study, federal park pass, cultural events, conference admission. ' +
+      'If named in the EPP: expensive science equipment (telescope, microscope), musical instruments, one sewing machine, camera, tools, physical-education equipment (hockey sticks, weights, treadmill), Girl Guides / Scouts / 4H memberships. ' +
+      'Tax and shipping on eligible items.',
+      // What does not count
+      'Competition, registration, admin, facility and membership fees; sports leagues; club fees (other than Guides/Scouts/4H). ' +
+      'Phones and phone plans, postage, travel (fuel, meals, accommodation, flights), camping equipment and campground fees. ' +
+      'Furniture of any kind (desks, bookshelves, chairs), home decor, renovation, lumber, sheds, garages, pools, playground or playhouse equipment, yard and garden (including seeds for gardening). ' +
+      'Clothing of any kind (uniforms, costumes, sportswear), shoes, backpacks, cosmetology supplies, graduation supplies. ' +
+      'Non-educational toys, entertainment, amusement park, circus and movie tickets (including IMAX), movie rentals, TV/cable/satellite, music or video streaming (Spotify, Netflix, Prime, YouTube), news subscriptions, non-educational videos, gaming consoles and handhelds, VR headsets, sport extras. ' +
+      'Pets and animals: purchase or adoption, food, grooming, cages, aquariums, ant farms, vet, husbandry, chick hatching. ' +
+      'Quads, tractors, e-bikes, scooters, hoverboards, weapons (bows and arrows unless clearly sold as training bows), fishing, hunting or boating licences, driver training. ' +
+      'Photography sessions, payments to parents or siblings, post-secondary or accredited courses, warranties and insurance, AI subscriptions (ChatGPT, Claude, Midjourney). ' +
+      'Groceries, fuel, household and personal items are never homeschool expenses.']
   ],
   TAGGED_FOLDER: 'Tagged',             // photos folder / Tagged / <Tag> holds a shortcut to every tagged receipt
   STORE_TYPES: [
@@ -67,13 +97,13 @@ const CONFIG = {
     'Receipt ID', 'Date', 'Time', 'Store', 'Store Type', 'Item Count', 'Subtotal',
     'GST/HST', 'Other Tax', 'Tip', 'Total', 'Payment', 'Who', 'Status',
     'Needs Review', 'Review Notes', 'Photo', 'Hash', 'Captured At', 'Filed At',
-    'Photo File ID', 'Confidence', 'Source', 'Pages', 'Duplicate Of', 'Bank Txn', 'Match Note', 'Tag'
+    'Photo File ID', 'Confidence', 'Source', 'Pages', 'Duplicate Of', 'Bank Txn', 'Match Note', 'Tag', 'Tag Hint'
   ],
   ITEM_HEADERS: [
     'Receipt ID', 'Date', 'Store', 'Item', 'Qty', 'Unit Price', 'Line Total',
-    'Category', 'Who', 'Notes', 'Tag'
+    'Category', 'Who', 'Notes', 'Tag', 'Tag Hint'
   ],
-  TAG_HEADERS: ['Tag', 'Category', 'Notes'],
+  TAG_HEADERS: ['Tag', 'Category', 'Notes', 'What counts', 'What does not count'],
   BANK_HEADERS: [
     'Txn ID', 'Date', 'Description', 'Amount', 'Direction', 'Account', 'Source File',
     'Status', 'Receipt ID', 'Note', 'Uploaded At'
@@ -92,8 +122,10 @@ const RC = {
   GST: 8, OTHER_TAX: 9, TIP: 10, TOTAL: 11, PAYMENT: 12, WHO: 13, STATUS: 14,
   NEEDS_REVIEW: 15, REVIEW_NOTES: 16, PHOTO: 17, HASH: 18, CAPTURED_AT: 19,
   FILED_AT: 20, FILE_ID: 21, CONFIDENCE: 22, SOURCE: 23, PAGES: 24, DUP_OF: 25,
-  BANK_TXN: 26, MATCH_NOTE: 27, TAG: 28
+  BANK_TXN: 26, MATCH_NOTE: 27, TAG: 28, TAG_HINT: 29
 };
+// Items tab columns
+const IC = { ID: 1, DATE: 2, STORE: 3, ITEM: 4, QTY: 5, UNIT: 6, LINE: 7, CATEGORY: 8, WHO: 9, NOTES: 10, TAG: 11, TAG_HINT: 12 };
 // Bank tab columns
 const BC = { ID: 1, DATE: 2, DESC: 3, AMOUNT: 4, DIR: 5, ACCOUNT: 6, SOURCE: 7, STATUS: 8, RECEIPT: 9, NOTE: 10, UPLOADED: 11 };
 
@@ -213,6 +245,7 @@ function doPost(e) {
     if (action === 'review') return json_(handleReview_(payload));
     if (action === 'budget') return json_(handleBudget_(payload));
     if (action === 'tag') return json_(handleTag_(payload));
+    if (action === 'tag_create') return json_(handleTagCreate_(payload));
     return json_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     log_('error', 'doPost ' + (payload.action || '') + ': ' + err + (err.stack ? '\n' + err.stack : ''));
@@ -225,7 +258,7 @@ function ping_() {
   const ss = getSpreadsheet_();
   return {
     ok: true,
-    version: '1.1',
+    version: '1.2',
     sheetUrl: ss.getUrl(),
     model: getModel_(),
     claudeKey: !!props.getProperty('ANTHROPIC_API_KEY'),
@@ -381,6 +414,7 @@ function processExisting_(ss, sh, existing, pagesB64) {
   rec.source = kind;
   rec.pages = existing.pages || 1;
   rec.tag = existing.tag || '';
+  applyTagHints_(rec);
 
   // Same purchase already filed from a different photo / phone / screenshot?
   const dup = findSemanticDuplicate_(ss, sh, rec, existing.row);
@@ -454,9 +488,43 @@ function receiptResponse_(ss, existing, duplicate) {
       photoUrl: existing.photoUrl,
       source: existing.source,
       tag: existing.tag,
+      tagHint: tagHintOf_(existing),
       items: items
     }
   };
+}
+
+/** The tag the reader thinks an untagged receipt belongs to ('' once tagged or dismissed). */
+function tagHintOf_(rec) {
+  if (rec.tag) return '';
+  const h = String(rec.tagHint || '');
+  return h && h !== 'dismissed' ? h : '';
+}
+
+/**
+ * Turns the reader's per-item tag guesses into either the claim marks (receipt already tagged)
+ * or a receipt-level hint for the app to show (receipt not tagged).
+ */
+function applyTagHints_(rec) {
+  const items = rec.items || [];
+  if (rec.tag) {
+    const tagCat = tagCategory_(rec.tag);
+    let any = false;
+    items.forEach(function (it) {
+      const claim = it.tagHint === rec.tag || (tagCat && it.category === tagCat);
+      it.tag = claim ? rec.tag : '';
+      if (claim && tagCat) it.category = tagCat;
+      if (claim) any = true;
+    });
+    // The shopper said the whole receipt is for this; if the reader marked nothing, claim everything
+    if (!any) items.forEach(function (it) { it.tag = rec.tag; if (tagCat) it.category = tagCat; });
+    rec.tagHint = '';
+    return;
+  }
+  const counts = {};
+  items.forEach(function (it) { it.tag = ''; if (it.tagHint) counts[it.tagHint] = (counts[it.tagHint] || 0) + 1; });
+  const best = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })[0] || '';
+  rec.tagHint = best;
 }
 
 function publicReceipt_(rec) {
@@ -479,8 +547,9 @@ function publicReceipt_(rec) {
     photoUrl: rec.photoUrl,
     source: rec.source,
     tag: rec.tag || '',
+    tagHint: tagHintOf_(rec),
     items: rec.items.map(function (it) {
-      return { name: it.name, qty: it.qty, unitPrice: it.unitPrice, lineTotal: it.lineTotal, category: it.category };
+      return { name: it.name, qty: it.qty, unitPrice: it.unitPrice, lineTotal: it.lineTotal, category: it.category, tag: it.tag || '', tagHint: it.tagHint || '' };
     })
   };
 }
@@ -638,6 +707,8 @@ function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
   const today = Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd');
   const captured = Utilities.formatDate(capturedAt, CONFIG.TZ, 'yyyy-MM-dd HH:mm');
   const cats = getCategories_();
+  const tags = readTags_(getSpreadsheet_());
+  const tagNames = tags.map(function (t) { return t.tag; });
   const tagCat = tag ? tagCategory_(tag) : '';
 
   const what = kind === 'pdf' ? 'this PDF receipt / order confirmation / invoice'
@@ -652,7 +723,7 @@ function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
     '  "date": "YYYY-MM-DD" or null,',
     '  "time": "HH:MM" (24h) or null,',
     '  "currency": "CAD" unless the receipt clearly shows another currency,',
-    '  "items": [ { "name": "plain-English item name", "qty": number, "unit_price": number or null, "line_total": number, "category": one of ' + JSON.stringify(cats) + ' } ],',
+    '  "items": [ { "name": "plain-English item name", "qty": number, "unit_price": number or null, "line_total": number, "category": one of ' + JSON.stringify(cats) + (tagNames.length ? ', "tag": one of ' + JSON.stringify(tagNames) + ' or null' : '') + ' } ],',
     '  "subtotal": number or null,',
     '  "gst": number or null,',
     '  "other_tax": number or null,',
@@ -678,8 +749,23 @@ function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
   if (sliceCount > 1) {
     instructions.push('- The ' + sliceCount + ' images are consecutive slices of ONE long screenshot, top to bottom, with a little overlap between neighbours. Read them as one page; a line that appears at the bottom of one slice and the top of the next is the same line — count it once.');
   }
-  if (tag && tagCat && cats.indexOf(tagCat) >= 0) {
-    instructions.push('- The shopper tagged this receipt "' + tag + '". Give the category "' + tagCat + '" to every item that plausibly belongs to that purpose (for a homeschool tag: books, workbooks, curriculum, school and art supplies, educational materials, lessons, printer paper and ink). Keep clearly unrelated items (groceries, fuel, personal care) in their usual categories. If the whole receipt is obviously for that purpose, use "' + tagCat + '" for all items.');
+  // Expense tags: what the family claims under each one, so claimable items get flagged even on untagged receipts
+  const guides = tags.filter(function (t) { return t.counts || t.notCounts; });
+  if (tagNames.length) {
+    instructions.push('', 'EXPENSE TAGS. The family files some purchases under a tag for reimbursement claims. For every item set "tag" to the tag it qualifies for, or null. Judge each item on its own against the guide below; be inclusive on borderline items (a person confirms every flag) but never tag something the guide excludes. Items with no guide-based reason stay null.');
+    tags.forEach(function (t) {
+      const bits = ['- "' + t.tag + '"' + (t.category ? ' (claimed items are categorized "' + t.category + '")' : '')];
+      if (t.counts) bits.push('  COUNTS: ' + t.counts);
+      if (t.notCounts) bits.push('  DOES NOT COUNT: ' + t.notCounts);
+      if (!t.counts && !t.notCounts) bits.push('  (no guide — only tag items that obviously belong to "' + t.tag + '")');
+      instructions.push(bits.join('\n'));
+    });
+  }
+  if (tag) {
+    const hasGuide = guides.some(function (t) { return t.tag === tag; });
+    instructions.push('', '- The shopper tagged this whole receipt "' + tag + '"' + (tagCat && cats.indexOf(tagCat) >= 0 ? ', so lean towards it: give "tag": "' + tag + '" and the category "' + tagCat + '"' : ', so lean towards it: give "tag": "' + tag + '"') +
+      ' to every item that could belong to that purpose' + (hasGuide ? ' under its guide' : ' (for a homeschool tag: books, workbooks, curriculum, school and art supplies, educational materials, lessons, printer paper and ink)') +
+      '. Keep items the guide excludes or that are clearly unrelated (groceries, fuel, personal care) in their usual categories with "tag": null.');
   }
   instructions.push('', 'Today is ' + today + ' (Mountain Time). The file was captured ' + captured + '. Most receipts are dated the same day or a few days earlier.');
 
@@ -759,6 +845,8 @@ function normalizeReceipt_(raw, capturedAt) {
   const cats = getCategories_();
   const catSet = {};
   cats.forEach(function (c) { catSet[c.toLowerCase()] = c; });
+  const tagSet = {};
+  readTags_(getSpreadsheet_()).forEach(function (t) { tagSet[t.tag.toLowerCase()] = t.tag; });
 
   const items = (Array.isArray(raw.items) ? raw.items : []).map(function (it) {
     const name = String((it && it.name) || '').trim() || 'Unlabelled item';
@@ -769,7 +857,8 @@ function normalizeReceipt_(raw, capturedAt) {
     if (line === null) { line = 0; notes.push('No price read for "' + name + '"'); }
     const catRaw = String((it && it.category) || '').trim().toLowerCase();
     const category = catSet[catRaw] || 'Other';
-    return { name: name, qty: qty === null ? 1 : qty, unitPrice: unit, lineTotal: round2_(line), category: category };
+    const tagHint = tagSet[String((it && it.tag) || '').trim().toLowerCase()] || '';
+    return { name: name, qty: qty === null ? 1 : qty, unitPrice: unit, lineTotal: round2_(line), category: category, tagHint: tagHint, tag: '' };
   });
 
   const itemsSum = round2_(items.reduce(function (s, it) { return s + it.lineTotal; }, 0));
@@ -1318,13 +1407,62 @@ function cleanTag_(t) {
   return String(t || '').trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 30);
 }
 
+/** Tags tab → [{tag, category, notes, counts, notCounts}] (cached briefly: the reader asks for this on every receipt). */
 function readTags_(ss) {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('tags');
+  if (hit) return JSON.parse(hit);
   const tsh = ss.getSheetByName(CONFIG.TABS.TAGS);
-  if (!tsh) return CONFIG.TAGS.map(function (t) { return { tag: t[0], category: t[1] }; });
-  const last = tsh.getLastRow();
-  if (last < 2) return [];
-  return tsh.getRange(2, 1, last - 1, 2).getValues().map(function (r) { return { tag: String(r[0] || '').trim(), category: String(r[1] || '').trim() }; })
-    .filter(function (t) { return t.tag; });
+  let out;
+  if (!tsh) out = CONFIG.TAGS.map(tagRowToObj_);
+  else {
+    const last = tsh.getLastRow();
+    out = last < 2 ? [] : tsh.getRange(2, 1, last - 1, CONFIG.TAG_HEADERS.length).getValues().map(tagRowToObj_).filter(function (t) { return t.tag; });
+  }
+  cache.put('tags', JSON.stringify(out), 120);
+  return out;
+}
+function tagRowToObj_(r) {
+  return { tag: String(r[0] || '').trim(), category: String(r[1] || '').trim(), notes: String(r[2] || '').trim(), counts: String(r[3] || '').trim(), notCounts: String(r[4] || '').trim() };
+}
+
+/** App action: add a tag from the phone. { name, category, notes, counts, notCounts } */
+function handleTagCreate_(payload) {
+  const name = cleanTag_(payload.name);
+  if (!name) return { ok: false, error: 'bad_request', message: 'The tag needs a name.' };
+  const ss = getSpreadsheet_();
+  ensureTabs_(ss);
+  const tsh = ss.getSheetByName(CONFIG.TABS.TAGS);
+  const existing = readTags_(ss).filter(function (t) { return t.tag.toLowerCase() === name.toLowerCase(); })[0];
+  if (existing) return { ok: false, error: 'exists', message: 'There is already a tag called ' + existing.tag + '.' };
+  let category = String(payload.category || '').trim().slice(0, 40);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    if (category) {
+      // A new category becomes a real category (the Categories tab is what the reader and the app use)
+      const cats = getCategories_();
+      const match = cats.filter(function (c) { return c.toLowerCase() === category.toLowerCase(); })[0];
+      if (match) category = match;
+      else {
+        const csh = ss.getSheetByName(CONFIG.TABS.CATEGORIES);
+        const otherRow = cats.indexOf('Other') >= 0 ? cats.indexOf('Other') + 2 : 0;
+        if (otherRow) { csh.insertRowBefore(otherRow); csh.getRange(otherRow, 1).setValue(category); }
+        else csh.appendRow([category]);
+        CacheService.getScriptCache().remove('categories');
+      }
+    }
+    tsh.appendRow([name, category, String(payload.notes || '').trim().slice(0, 2000), String(payload.counts || '').trim().slice(0, 4000), String(payload.notCounts || '').trim().slice(0, 4000)]);
+    CacheService.getScriptCache().remove('tags');
+  } finally {
+    lock.releaseLock();
+  }
+  try { tagFolder_(name); } catch (e) { log_('warn', 'tag folder ' + name + ': ' + e); }
+  return { ok: true, tag: name, category: category, tags: publicTags_(ss) };
+}
+
+function publicTags_(ss) {
+  return readTags_(ss).map(function (t) { return { name: t.tag, category: t.category, notes: t.notes, counts: t.counts, notCounts: t.notCounts, folder: tagFolderUrl_(t.tag) }; });
 }
 
 function tagCategory_(tag) {
@@ -1366,29 +1504,65 @@ function removeTagShortcut_(tag, file) {
   } catch (e) { /* best effort */ }
 }
 
-/** App action: tag (or untag) a filed receipt. { receiptId, tag: 'Homeschool' | '', applyCategory: true|false } */
+/**
+ * App action: tag (or untag) a filed receipt, or wave off a hint.
+ *   { receiptId, tag: 'Homeschool', items: [0, 2] }   claim just those items (indexes in the receipt's item order);
+ *                                                     they get the tag's category + the Tag mark, the others keep theirs
+ *   { receiptId, tag: 'Homeschool', applyCategory: true }   every item is claimed
+ *   { receiptId, tag: 'Homeschool' }                  claim the items the reader flagged / already in the tag's category
+ *   { receiptId, tag: '' }                            untag: receipt and items lose the mark, categories stay
+ *   { receiptId, dismiss: true }                      "not a <tag> receipt": the hint stops showing
+ */
 function handleTag_(payload) {
   const id = String(payload.receiptId || '').trim();
   if (!id) return { ok: false, error: 'bad_request', message: 'Need receiptId.' };
-  const tag = cleanTag_(payload.tag);
   const ss = getSpreadsheet_();
   ensureTabs_(ss);
   const sh = ss.getSheetByName(CONFIG.TABS.RECEIPTS);
   const ex = findReceiptById_(sh, id);
   if (!ex) return { ok: false, error: 'not_found', message: 'Receipt not found.' };
+
+  if (payload.dismiss) {
+    sh.getRange(ex.row, RC.TAG_HINT).setValue(ex.tag ? '' : 'dismissed');
+    return { ok: true, receiptId: id, tag: ex.tag, dismissed: true };
+  }
+
+  const tag = cleanTag_(payload.tag);
   const cat = tag ? tagCategory_(tag) : '';
+  const pick = Array.isArray(payload.items) ? payload.items.map(Number) : null;
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
+  let claimed = 0;
   try {
     sh.getRange(ex.row, RC.TAG).setValue(tag);
+    sh.getRange(ex.row, RC.TAG_HINT).setValue('');
     const ish = ss.getSheetByName(CONFIG.TABS.ITEMS);
     const last = ish.getLastRow();
     if (last >= 2) {
       const vals = ish.getRange(2, 1, last - 1, CONFIG.ITEM_HEADERS.length).getValues();
+      let n = 0;
       for (let i = 0; i < vals.length; i++) {
         if (String(vals[i][0]) !== id) continue;
-        ish.getRange(i + 2, 11).setValue(tag);
-        if (tag && cat && payload.applyCategory) ish.getRange(i + 2, 8).setValue(cat);
+        const idx = n++;
+        let claim = false;
+        if (tag) {
+          if (pick) claim = pick.indexOf(idx) >= 0;
+          else if (payload.applyCategory === true) claim = true;
+          else if (payload.applyCategory === false) claim = false;   // just file the photo; nothing claimed yet
+          else claim = String(vals[i][IC.TAG_HINT - 1] || '') === tag || (cat && String(vals[i][IC.CATEGORY - 1] || '') === cat) || String(vals[i][IC.TAG - 1] || '') === tag;
+        }
+        ish.getRange(i + 2, IC.TAG).setValue(claim ? tag : '');
+        if (claim && cat) ish.getRange(i + 2, IC.CATEGORY).setValue(cat);
+        if (claim) claimed++;
+      }
+      // Tagged with nothing said about the items: the receipt is for this purpose, so everything counts
+      if (tag && !pick && payload.applyCategory === undefined && !claimed) {
+        for (let i = 0; i < vals.length; i++) {
+          if (String(vals[i][0]) !== id) continue;
+          ish.getRange(i + 2, IC.TAG).setValue(tag);
+          if (cat) ish.getRange(i + 2, IC.CATEGORY).setValue(cat);
+          claimed++;
+        }
       }
     }
   } finally {
@@ -1401,7 +1575,7 @@ function handleTag_(payload) {
       if (tag) fileTagShortcut_(tag, file);
     } catch (e) { log_('warn', 'tag shortcut ' + id + ': ' + e); }
   }
-  return { ok: true, receiptId: id, tag: tag, category: tag && payload.applyCategory ? cat : '' };
+  return { ok: true, receiptId: id, tag: tag, category: cat, claimed: claimed, items: readItemsFor_(ss, id) };
 }
 
 /* ===================================================================
@@ -1487,6 +1661,7 @@ function writeReceipt_(ss, sh, row, rec, status) {
   values[RC.BANK_TXN - 1] = rec.bankTxn || '';
   values[RC.MATCH_NOTE - 1] = rec.matchNote || '';
   values[RC.TAG - 1] = rec.tag || '';
+  values[RC.TAG_HINT - 1] = rec.tag ? '' : (rec.tagHint || '');
   sh.getRange(row, 1, 1, values.length).setValues([values]);
   // appendRow() in phase 1 gives date cells an automatic date-time format; put the column formats back
   sh.getRange(row, RC.DATE).setNumberFormat('yyyy-mm-dd');
@@ -1499,7 +1674,7 @@ function writeReceipt_(ss, sh, row, rec, status) {
   if (rec.items.length) {
     const d = dateFromYmd_(rec.date);
     const rows = rec.items.map(function (it) {
-      return [rec.id, d, rec.store, it.name, it.qty, it.unitPrice === null ? '' : it.unitPrice, it.lineTotal, it.category, rec.who, '', rec.tag || ''];
+      return [rec.id, d, rec.store, it.name, it.qty, it.unitPrice === null ? '' : it.unitPrice, it.lineTotal, it.category, rec.who, '', it.tag || '', it.tagHint || ''];
     });
     ish.getRange(ish.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
   }
@@ -1521,7 +1696,7 @@ function readItemsFor_(ss, receiptId) {
   if (last < 2) return [];
   const vals = ish.getRange(2, 1, last - 1, CONFIG.ITEM_HEADERS.length).getValues();
   return vals.filter(function (r) { return String(r[0]) === receiptId; }).map(function (r) {
-    return { name: r[3], qty: num_(r[4]), unitPrice: num_(r[5]), lineTotal: num_(r[6]) || 0, category: r[7] };
+    return { name: r[IC.ITEM - 1], qty: num_(r[IC.QTY - 1]), unitPrice: num_(r[IC.UNIT - 1]), lineTotal: num_(r[IC.LINE - 1]) || 0, category: r[IC.CATEGORY - 1], tag: String(r[IC.TAG - 1] || ''), tagHint: String(r[IC.TAG_HINT - 1] || '') };
   });
 }
 
@@ -1582,7 +1757,8 @@ function readReceiptRow_(sh, row) {
     pages: num_(v[RC.PAGES - 1]) || 1,
     dupOf: String(v[RC.DUP_OF - 1] || ''),
     bankTxn: String(v[RC.BANK_TXN - 1] || ''),
-    tag: String(v[RC.TAG - 1] || '')
+    tag: String(v[RC.TAG - 1] || ''),
+    tagHint: String(v[RC.TAG_HINT - 1] || '')
   };
 }
 
@@ -1630,6 +1806,7 @@ function buildSummary_() {
       if (String(v[RC.NEEDS_REVIEW - 1] || '') === 'YES') { r.nr = 1; r.rn = String(v[RC.REVIEW_NOTES - 1] || '').slice(0, 200); }
       if (String(v[RC.DUP_OF - 1] || '')) r.dup = String(v[RC.DUP_OF - 1]);
       if (String(v[RC.TAG - 1] || '')) r.tg = String(v[RC.TAG - 1]);
+      else { const th = String(v[RC.TAG_HINT - 1] || ''); if (th && th !== 'dismissed') r.th = th; }
       idToIdx[r.id] = receipts.length;
       receipts.push(r);
     });
@@ -1644,11 +1821,12 @@ function buildSummary_() {
       const idx = idToIdx[String(v[0])];
       if (idx === undefined) return;
       const r = receipts[idx];
-      const line = num_(v[6]) || 0;
-      const ci = cat(String(v[7] || 'Other'));
+      const line = num_(v[IC.LINE - 1]) || 0;
+      const ci = cat(String(v[IC.CATEGORY - 1] || 'Other'));
       r.c[ci] = (r.c[ci] || 0) + line;
       r._ls += line;
-      if (r.d >= itemsFrom) items.push([idx, String(v[3] || ''), num_(v[4]) || 1, round2_(line), ci]);
+      // [receipt index, name, qty, line total, category index, claimed under tag, reader's tag hint]
+      if (r.d >= itemsFrom) items.push([idx, String(v[IC.ITEM - 1] || ''), num_(v[IC.QTY - 1]) || 1, round2_(line), ci, String(v[IC.TAG - 1] || ''), String(v[IC.TAG_HINT - 1] || '')]);
     });
   }
   receipts.forEach(function (r) {
@@ -1696,7 +1874,7 @@ function buildSummary_() {
   noReceipt.sort(function (a, b) { return b.d.localeCompare(a.d); });
 
   const budgets = readBudgets_(ss);
-  const tags = readTags_(ss).map(function (t) { return { name: t.tag, category: t.category, folder: tagFolderUrl_(t.tag) }; });
+  const tags = publicTags_(ss);
   return {
     ok: true,
     v: 2,
@@ -1818,7 +1996,27 @@ function ensureTabs_(ss) {
   if (tsh.getLastRow() === 0) {
     tsh.getRange(1, 1, 1, CONFIG.TAG_HEADERS.length).setValues([CONFIG.TAG_HEADERS]).setFontWeight('bold');
     tsh.setFrozenRows(1);
-    tsh.getRange(2, 1, CONFIG.TAGS.length, 3).setValues(CONFIG.TAGS);
+    tsh.getRange(2, 1, CONFIG.TAGS.length, CONFIG.TAG_HEADERS.length).setValues(CONFIG.TAGS);
+  } else {
+    // Older Tags tab: add the guide columns, and give the built-in tags their guide where the cells are still empty
+    const thdr = tsh.getRange(1, 1, 1, CONFIG.TAG_HEADERS.length).getValues()[0];
+    let thave = 0;
+    for (let i = 0; i < thdr.length; i++) if (String(thdr[i] || '').trim()) thave = i + 1;
+    if (thave < CONFIG.TAG_HEADERS.length) {
+      tsh.getRange(1, thave + 1, 1, CONFIG.TAG_HEADERS.length - thave).setValues([CONFIG.TAG_HEADERS.slice(thave)]).setFontWeight('bold');
+      const last = tsh.getLastRow();
+      if (last >= 2) {
+        const rows = tsh.getRange(2, 1, last - 1, CONFIG.TAG_HEADERS.length).getValues();
+        rows.forEach(function (r, i) {
+          const seed = CONFIG.TAGS.filter(function (t) { return t[0].toLowerCase() === String(r[0] || '').trim().toLowerCase(); })[0];
+          if (!seed) return;
+          const oldDefaults = ['Receipts to claim for home education funding'];
+          const fill = seed.map(function (v, j) { const cur = String(r[j] || '').trim(); return j < thave && cur && oldDefaults.indexOf(cur) < 0 ? r[j] : v; });
+          tsh.getRange(i + 2, 1, 1, fill.length).setValues([fill]);
+        });
+      }
+      CacheService.getScriptCache().remove('tags');
+    }
   }
 
   let csh = ss.getSheetByName(CONFIG.TABS.CATEGORIES);
