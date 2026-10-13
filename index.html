@@ -410,7 +410,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 (function () {
   'use strict';
   const C = window.ReceiptsCore;
-  const APP_VERSION = '1.4.0';
+  const APP_VERSION = '1.4.1';
   // Pre-set connection so nobody has to type anything. More → Connection can still override.
   const DEFAULTS = { url: 'https://script.google.com/macros/s/AKfycbwmez6dyUMTubrqBMnQ6ehYslyQbhS6mXGPGBAP5OJ8P4sU_OsZZJEDba2sKaIT5amI/exec', token: 'prairie482' };
   const $ = function (id) { return document.getElementById(id); };
@@ -788,6 +788,26 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     state.summaryStale = true;
     await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot(); maybeRefreshSummary(true);
     if (!$('sheet').classList.contains('hidden') && state.summary && state.summary._byId && state.summary._byId[receiptId] >= 0) openReceipt(state.summary._byId[receiptId]);
+  }
+
+  /** Scanned by mistake: out of the sheet, photo to Drive's trash, bank charge freed, gone from this phone. */
+  async function removeReceipt(receiptId, localId, btn) {
+    const s = state.summary;
+    const local = state.records.find(function (r) { return r.receiptId === receiptId; });
+    const rec = (local && local.result) || (s && s._byId && s._byId[receiptId] >= 0 ? { store: s.receipts[s._byId[receiptId]].s, total: s.receipts[s._byId[receiptId]].t } : {});
+    const what = (rec.store || 'this receipt') + (rec.total != null ? ' ' + money(rec.total) : '');
+    if (!confirm('Remove ' + what + '?\n\nIt comes out of the sheet, the photo goes to the Drive trash (30 days to get it back), and any bank charge it was matched to goes back to "no receipt".')) return;
+    if (btn) btn.disabled = true;
+    const res = await postAction({ action: 'delete', receiptId: receiptId });
+    if (btn) btn.disabled = false;
+    if (!res) return;
+    for (const r of state.records) { if (r.receiptId === receiptId) await C.deleteRecord(r.id); }
+    if (localId && state.records.some(function (r) { return r.id === localId; })) await C.deleteRecord(localId);
+    if (s) dropReceiptFromSummary(s, receiptId);
+    closeSheet();
+    toast('Removed' + (res.freedTxn ? ' — its bank charge is back under "Needs a look"' : ''));
+    state.summaryStale = true;
+    await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot(); maybeRefreshSummary(true);
   }
 
   /** "Not a Homeschool receipt": the hint goes away on every phone. */
@@ -1184,7 +1204,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
           (hint ? '<div class="hintbox"><b>Looks like a ' + esc(hint) + ' expense</b> — the 🏷️? lines fit the claim rules.<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.receiptId) + '" data-tag="' + esc(hint) + '">🏷️ Tag as ' + esc(hint) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.receiptId) + '">Not ' + esc(hint) + '</button></div></div>' : '') +
           '<div style="display:block;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
           (r.receiptId ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.receiptId) + '" data-cur="' + esc(rec.tag || '') + '">🏷️ ' + (rec.tag ? 'Change tag' : 'Tag') + '</button>' : '') +
-          (rec.photoUrl ? '<a class="btn small" href="' + esc(rec.photoUrl) + '" target="_blank" rel="noopener">Open in Drive</a>' : '') + '</div>' +
+          (rec.photoUrl ? '<a class="btn small" href="' + esc(rec.photoUrl) + '" target="_blank" rel="noopener">Open in Drive</a>' : '') +
+          (r.receiptId ? '<button class="btn small danger" data-act="rm" data-rid="' + esc(r.receiptId) + '" data-id="' + r.id + '" style="margin-left:auto">Remove</button>' : '') + '</div>' +
           '</div>';
       }
       return '<li class="item" data-act="toggle" data-id="' + r.id + '">' + thumbHtml(r) +
@@ -1243,6 +1264,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (act === 'review') { await markReviewed(el.dataset.rid, el); return; }
     if (act === 'tag') { openTagPicker(el.dataset.rid, el.dataset.cur || ''); return; }
     if (act === 'hint-tag') { openTagItems(el.dataset.rid, el.dataset.tag); return; }
+    if (act === 'rm') { await removeReceipt(el.dataset.rid, el.dataset.id || '', el); return; }
     if (act === 'hint-no') { await dismissHint(el.dataset.rid, el); return; }
     if (act === 'bank-expense' || act === 'bank-ignore' || act === 'bank-undo' || act === 'bank-save' || act === 'bank-cancel') { await bankAction(act, el); return; }
     if (act === 'drill') { openDrill(el.dataset.kind, el.dataset.key); return; }
@@ -1282,9 +1304,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     }
     const s = state.summary;
     if (s) {
-      if (decision === 'remove') { s.receipts = s.receipts.filter(function (r) { return r.id !== receiptId; }); s.removedDups = s.removedDups.filter(function (r) { return r.id !== receiptId; }); }
-      else { s.receipts.forEach(function (r) { if (r.id === receiptId) { delete r.dup; if (r.rn && /^Possible duplicate/.test(r.rn)) { delete r.nr; delete r.rn; } } }); s.removedDups = s.removedDups.filter(function (r) { return r.id !== receiptId; }); }
-      reindexItems(s);
+      if (decision === 'remove') dropReceiptFromSummary(s, receiptId);
+      else { s.receipts.forEach(function (r) { if (r.id === receiptId) { delete r.dup; if (r.rn && /^Possible duplicate/.test(r.rn)) { delete r.nr; delete r.rn; } } }); s.removedDups = s.removedDups.filter(function (r) { return r.id !== receiptId; }); reindexItems(s); }
     }
     toast(decision === 'remove' ? 'Removed — not counted' : 'Kept both');
     state.summaryStale = true;
@@ -1405,6 +1426,17 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
         toast('The backend is an older version — update the Apps Script');
       }
     } catch (e) { console.warn('summary refresh failed', e); }
+  }
+
+  /** Takes one receipt out of the cached feed, keeping the items' receipt indexes right. */
+  function dropReceiptFromSummary(s, receiptId) {
+    const k = s.receipts.findIndex(function (r) { return r.id === receiptId; });
+    if (k < 0) return;
+    s.receipts.splice(k, 1);
+    s.items = (s.items || []).filter(function (it) { return it[0] !== k; });
+    s.items.forEach(function (it) { if (it[0] > k) it[0]--; });
+    s.removedDups = (s.removedDups || []).filter(function (r) { return r.id !== receiptId; });
+    reindexItems(s);
   }
 
   /** items carry the receipt's index; keep a per-receipt lookup so drill-downs are cheap */
@@ -1850,7 +1882,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (r.th && !r.tg) html += '<div class="hintbox"><b>Looks like a ' + esc(r.th) + ' expense</b> — the 🏷️? lines fit the claim rules.<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.id) + '" data-tag="' + esc(r.th) + '">🏷️ Tag as ' + esc(r.th) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.id) + '">Not ' + esc(r.th) + '</button></div></div>';
     if (r.nr) html += '<div class="notice">⚠️ ' + esc(r.rn || 'Please check this one') + ' <button class="btn small" data-act="review" data-rid="' + esc(r.id) + '">Looks right</button></div>';
     if (r.bm) html += '<div class="small good" style="margin-top:8px">✓ Matched to a bank charge</div>';
-    html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' + (r.src !== 'bank' ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.id) + '" data-cur="' + esc(r.tg || '') + '">🏷️ ' + (r.tg ? 'Change tag' : 'Tag') + '</button>' : '') + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') + '</div></div>';
+    html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + (r.src !== 'bank' ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.id) + '" data-cur="' + esc(r.tg || '') + '">🏷️ ' + (r.tg ? 'Change tag' : 'Tag') + '</button>' : '') + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') +
+      '<button class="btn small danger" data-act="rm" data-rid="' + esc(r.id) + '" style="margin-left:auto">Remove</button></div></div>';
     openSheet(r.s, html);
   }
 

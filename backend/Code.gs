@@ -246,6 +246,7 @@ function doPost(e) {
     if (action === 'budget') return json_(handleBudget_(payload));
     if (action === 'tag') return json_(handleTag_(payload));
     if (action === 'tag_create') return json_(handleTagCreate_(payload));
+    if (action === 'delete') return json_(handleDelete_(payload));
     return json_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     log_('error', 'doPost ' + (payload.action || '') + ': ' + err + (err.stack ? '\n' + err.stack : ''));
@@ -684,6 +685,64 @@ function handleResolve_(payload) {
   } catch (e) { /* cosmetic */ }
   try { reconcile_(ss); } catch (e) { log_('warn', 'reconcile after resolve: ' + e); }
   return { ok: true, receiptId: id, status: decision === 'keep' ? 'ok' : 'duplicate' };
+}
+
+/**
+ * App action: a receipt scanned by mistake. { receiptId }
+ * Removes the Receipts row and its Items rows, trashes the photo (and any slices / tag shortcut),
+ * gives a matched bank charge back its "no receipt" status, and un-duplicates any copy that pointed here.
+ * The hash goes with the row, so the same photo can be filed again on purpose.
+ */
+function handleDelete_(payload) {
+  const id = String(payload.receiptId || '').trim();
+  if (!id) return { ok: false, error: 'bad_request', message: 'Need receiptId.' };
+  const ss = getSpreadsheet_();
+  const sh = ss.getSheetByName(CONFIG.TABS.RECEIPTS);
+  const ex = findReceiptById_(sh, id);
+  if (!ex) return { ok: true, receiptId: id, gone: true, message: 'Already gone.' };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  let freedTxn = '', restored = 0;
+  try {
+    deleteItemsFor_(ss.getSheetByName(CONFIG.TABS.ITEMS), id);
+    // Copies that were filed as duplicates of this one count again
+    const last = sh.getLastRow();
+    if (last >= 2) {
+      const dups = sh.getRange(2, RC.DUP_OF, last - 1, 1).getValues();
+      for (let i = 0; i < dups.length; i++) {
+        if (String(dups[i][0]) !== id) continue;
+        const row = i + 2;
+        sh.getRange(row, RC.DUP_OF).setValue('');
+        if (String(sh.getRange(row, RC.STATUS).getValue()) === 'duplicate') sh.getRange(row, RC.STATUS).setValue('ok');
+        restored++;
+      }
+    }
+    if (ex.bankTxn) {
+      const bsh = ss.getSheetByName(CONFIG.TABS.BANK);
+      const brow = findBankRow_(bsh, ex.bankTxn);
+      if (brow) { bsh.getRange(brow, BC.STATUS).setValue('no_receipt'); bsh.getRange(brow, BC.RECEIPT).setValue(''); bsh.getRange(brow, BC.NOTE).setValue(''); freedTxn = ex.bankTxn; }
+    }
+    sh.deleteRow(ex.row);
+  } finally {
+    lock.releaseLock();
+  }
+  if (ex.fileId) {
+    try {
+      const file = DriveApp.getFileById(ex.fileId);
+      if (ex.tag) removeTagShortcut_(ex.tag, file);
+      file.setTrashed(true);
+    } catch (e) { log_('warn', 'delete photo ' + id + ': ' + e); }
+  }
+  if (ex.pages > 1) {
+    try {
+      const it = getPagesFolder_().getFiles();
+      while (it.hasNext()) { const f = it.next(); if (f.getName().indexOf(id + '-p') === 0) f.setTrashed(true); }
+    } catch (e) { /* slices are disposable */ }
+  }
+  log_('info', 'Removed ' + id + ' (' + ex.store + ' ' + ex.date + ' $' + ex.total + ') on request' + (freedTxn ? '; bank ' + freedTxn + ' back to no receipt' : '') + (restored ? '; ' + restored + ' duplicate copy restored' : ''));
+  if (freedTxn || restored) { try { reconcile_(ss); } catch (e) { log_('warn', 'reconcile after delete: ' + e); } }
+  return { ok: true, receiptId: id, gone: true, freedTxn: freedTxn, restored: restored };
 }
 
 /** App action: "Looks right" — clears the needs-review flag. { receiptId } */
