@@ -236,6 +236,7 @@
           kind: meta.kind || 'photo',
           thumb: meta.thumb || null,
           who: meta.who || '',
+          tag: meta.tag || '',
           result: null,
           message: ''
         };
@@ -312,6 +313,7 @@
         mime: rec.mime,
         kind: rec.kind || 'photo',
         who: rec.who || cfg.who || '',
+        tag: rec.tag || '',
         capturedAt: rec.capturedAt,
         clientId: rec.id
       };

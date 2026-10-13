@@ -42,8 +42,13 @@ const CONFIG = {
     'Kids & Baby', 'Pets', 'Entertainment', 'Electronics', 'Gifts', 'Travel',
     'Alcohol & Tobacco', 'Office & Stationery', 'Farm & Ranch',
     'Utilities & Bills', 'Phone & Internet', 'Insurance', 'Subscriptions & Memberships',
-    'Bank Fees & Interest', 'Other'
+    'Bank Fees & Interest', 'Homeschooling', 'Other'
   ],
+  // Tags a receipt can be marked with in the app (editable in the Tags tab): tag → category the reader favours
+  TAGS: [
+    ['Homeschool', 'Homeschooling', 'Receipts to claim for home education funding']
+  ],
+  TAGGED_FOLDER: 'Tagged',             // photos folder / Tagged / <Tag> holds a shortcut to every tagged receipt
   STORE_TYPES: [
     'Grocery', 'Gas Station', 'Restaurant', 'Hardware', 'Pharmacy',
     'Department Store', 'Online', 'Farm Supply', 'Clothing', 'Other'
@@ -55,18 +60,20 @@ const CONFIG = {
     RULES: 'Bank Rules',
     BUDGETS: 'Budgets',
     CATEGORIES: 'Categories',
+    TAGS: 'Tags',
     LOG: 'Log'
   },
   RECEIPT_HEADERS: [
     'Receipt ID', 'Date', 'Time', 'Store', 'Store Type', 'Item Count', 'Subtotal',
     'GST/HST', 'Other Tax', 'Tip', 'Total', 'Payment', 'Who', 'Status',
     'Needs Review', 'Review Notes', 'Photo', 'Hash', 'Captured At', 'Filed At',
-    'Photo File ID', 'Confidence', 'Source', 'Pages', 'Duplicate Of', 'Bank Txn', 'Match Note'
+    'Photo File ID', 'Confidence', 'Source', 'Pages', 'Duplicate Of', 'Bank Txn', 'Match Note', 'Tag'
   ],
   ITEM_HEADERS: [
     'Receipt ID', 'Date', 'Store', 'Item', 'Qty', 'Unit Price', 'Line Total',
-    'Category', 'Who', 'Notes'
+    'Category', 'Who', 'Notes', 'Tag'
   ],
+  TAG_HEADERS: ['Tag', 'Category', 'Notes'],
   BANK_HEADERS: [
     'Txn ID', 'Date', 'Description', 'Amount', 'Direction', 'Account', 'Source File',
     'Status', 'Receipt ID', 'Note', 'Uploaded At'
@@ -85,7 +92,7 @@ const RC = {
   GST: 8, OTHER_TAX: 9, TIP: 10, TOTAL: 11, PAYMENT: 12, WHO: 13, STATUS: 14,
   NEEDS_REVIEW: 15, REVIEW_NOTES: 16, PHOTO: 17, HASH: 18, CAPTURED_AT: 19,
   FILED_AT: 20, FILE_ID: 21, CONFIDENCE: 22, SOURCE: 23, PAGES: 24, DUP_OF: 25,
-  BANK_TXN: 26, MATCH_NOTE: 27
+  BANK_TXN: 26, MATCH_NOTE: 27, TAG: 28
 };
 // Bank tab columns
 const BC = { ID: 1, DATE: 2, DESC: 3, AMOUNT: 4, DIR: 5, ACCOUNT: 6, SOURCE: 7, STATUS: 8, RECEIPT: 9, NOTE: 10, UPLOADED: 11 };
@@ -205,6 +212,7 @@ function doPost(e) {
     if (action === 'resolve') return json_(handleResolve_(payload));
     if (action === 'review') return json_(handleReview_(payload));
     if (action === 'budget') return json_(handleBudget_(payload));
+    if (action === 'tag') return json_(handleTag_(payload));
     return json_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     log_('error', 'doPost ' + (payload.action || '') + ': ' + err + (err.stack ? '\n' + err.stack : ''));
@@ -248,6 +256,7 @@ function handleReceipt_(payload) {
   const who = cleanWho_(payload.who);
   const capturedAt = parseIso_(payload.capturedAt) || new Date();
   const kind = cleanKind_(payload.kind, payload.mime);
+  const tag = cleanTag_(payload.tag);
   const pages = Array.isArray(payload.pages) ? payload.pages.filter(function (p) { return p && String(p).length > 100; }) : [];
 
   // ---- Phase 1 (under lock): dedupe + reserve a row ----------------------
@@ -280,6 +289,7 @@ function handleReceipt_(payload) {
       row[RC.FILED_AT - 1] = new Date();
       row[RC.SOURCE - 1] = kind;
       row[RC.PAGES - 1] = pages.length || 1;
+      row[RC.TAG - 1] = tag;
       sh.appendRow(row);
       existing = readReceiptRow_(sh, sh.getLastRow());
     }
@@ -307,6 +317,7 @@ function handleReceipt_(payload) {
   existing.who = existing.who || who;
   existing.capturedAt = existing.capturedAt || capturedAt;
   existing.source = existing.source || kind;
+  if (!existing.tag && tag) { existing.tag = tag; sh.getRange(existing.row, RC.TAG).setValue(tag); }
 
   // ---- Phase 3: read it with Claude and file it --------------------------
   return processExisting_(ss, sh, existing, pages.length > 1 ? pages : null);
@@ -339,7 +350,7 @@ function processExisting_(ss, sh, existing, pagesB64) {
 
   let parsed;
   try {
-    parsed = extractReceipt_(blocks, kind, capturedAt, blocks.length > 1 ? Math.ceil(blocks.length / 2) : 1);
+    parsed = extractReceipt_(blocks, kind, capturedAt, blocks.length > 1 ? Math.ceil(blocks.length / 2) : 1, existing.tag);
   } catch (err) {
     log_('error', 'extract ' + existing.id + ': ' + err);
     sh.getRange(existing.row, RC.STATUS).setValue('error');
@@ -369,6 +380,7 @@ function processExisting_(ss, sh, existing, pagesB64) {
   rec.capturedAt = capturedAt;
   rec.source = kind;
   rec.pages = existing.pages || 1;
+  rec.tag = existing.tag || '';
 
   // Same purchase already filed from a different photo / phone / screenshot?
   const dup = findSemanticDuplicate_(ss, sh, rec, existing.row);
@@ -393,6 +405,7 @@ function processExisting_(ss, sh, existing, pagesB64) {
     const prefix = dup && dup.strong ? 'DUPLICATE ' : '';
     file.setName(safeName_(prefix + rec.date + ' ' + rec.store + ' $' + rec.total.toFixed(2) + ' (' + rec.id + ')' + extFor_(mime)));
   } catch (e) { /* cosmetic */ }
+  if (rec.tag && !(dup && dup.strong)) { try { fileTagShortcut_(rec.tag, file); } catch (e) { log_('warn', 'tag folder ' + rec.id + ': ' + e); } }
 
   // Line it up with the bank (only receipts that count)
   if (!(dup && dup.strong)) {
@@ -440,6 +453,7 @@ function receiptResponse_(ss, existing, duplicate) {
       reviewNotes: existing.reviewNotes,
       photoUrl: existing.photoUrl,
       source: existing.source,
+      tag: existing.tag,
       items: items
     }
   };
@@ -464,6 +478,7 @@ function publicReceipt_(rec) {
     confidence: rec.confidence,
     photoUrl: rec.photoUrl,
     source: rec.source,
+    tag: rec.tag || '',
     items: rec.items.map(function (it) {
       return { name: it.name, qty: it.qty, unitPrice: it.unitPrice, lineTotal: it.lineTotal, category: it.category };
     })
@@ -613,10 +628,11 @@ function handleReview_(payload) {
  *  CLAUDE EXTRACTION
  * =================================================================== */
 
-function extractReceipt_(blocks, kind, capturedAt, sliceCount) {
+function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
   const today = Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd');
   const captured = Utilities.formatDate(capturedAt, CONFIG.TZ, 'yyyy-MM-dd HH:mm');
   const cats = getCategories_();
+  const tagCat = tag ? tagCategory_(tag) : '';
 
   const what = kind === 'pdf' ? 'this PDF receipt / order confirmation / invoice'
     : (kind === 'screenshot' ? 'this screenshot of a receipt, order confirmation or order summary' : 'this receipt photo');
@@ -655,6 +671,9 @@ function extractReceipt_(blocks, kind, capturedAt, sliceCount) {
   ];
   if (sliceCount > 1) {
     instructions.push('- The ' + sliceCount + ' images are consecutive slices of ONE long screenshot, top to bottom, with a little overlap between neighbours. Read them as one page; a line that appears at the bottom of one slice and the top of the next is the same line — count it once.');
+  }
+  if (tag && tagCat && cats.indexOf(tagCat) >= 0) {
+    instructions.push('- The shopper tagged this receipt "' + tag + '". Give the category "' + tagCat + '" to every item that plausibly belongs to that purpose (for a homeschool tag: books, workbooks, curriculum, school and art supplies, educational materials, lessons, printer paper and ink). Keep clearly unrelated items (groceries, fuel, personal care) in their usual categories. If the whole receipt is obviously for that purpose, use "' + tagCat + '" for all items.');
   }
   instructions.push('', 'Today is ' + today + ' (Mountain Time). The file was captured ' + captured + '. Most receipts are dated the same day or a few days earlier.');
 
@@ -1286,6 +1305,100 @@ function descMatchesStore_(desc, store) {
 }
 
 /* ===================================================================
+ *  TAGS  ("Homeschool" etc. — a mark the shopper puts on a whole receipt)
+ * =================================================================== */
+
+function cleanTag_(t) {
+  return String(t || '').trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 30);
+}
+
+function readTags_(ss) {
+  const tsh = ss.getSheetByName(CONFIG.TABS.TAGS);
+  if (!tsh) return CONFIG.TAGS.map(function (t) { return { tag: t[0], category: t[1] }; });
+  const last = tsh.getLastRow();
+  if (last < 2) return [];
+  return tsh.getRange(2, 1, last - 1, 2).getValues().map(function (r) { return { tag: String(r[0] || '').trim(), category: String(r[1] || '').trim() }; })
+    .filter(function (t) { return t.tag; });
+}
+
+function tagCategory_(tag) {
+  const t = readTags_(getSpreadsheet_()).filter(function (x) { return x.tag.toLowerCase() === String(tag).toLowerCase(); })[0];
+  return t ? t.category : '';
+}
+
+function tagFolder_(tag) {
+  const root = getFolder_();
+  let it = root.getFoldersByName(CONFIG.TAGGED_FOLDER);
+  const tagged = it.hasNext() ? it.next() : root.createFolder(CONFIG.TAGGED_FOLDER);
+  it = tagged.getFoldersByName(tag);
+  return it.hasNext() ? it.next() : tagged.createFolder(tag);
+}
+
+const tagFolderUrlCache_ = {};
+function tagFolderUrl_(tag) {
+  if (tagFolderUrlCache_[tag]) return tagFolderUrlCache_[tag];
+  try { tagFolderUrlCache_[tag] = tagFolder_(tag).getUrl(); } catch (e) { tagFolderUrlCache_[tag] = ''; }
+  return tagFolderUrlCache_[tag];
+}
+
+/** A shortcut to the receipt's photo in Tagged/<Tag>, so the folder is the claim file. */
+function fileTagShortcut_(tag, file) {
+  const folder = tagFolder_(tag);
+  const name = file.getName();
+  const existing = folder.getFilesByName(name);
+  if (existing.hasNext()) return existing.next();
+  const sc = folder.createShortcut(file.getId());
+  sc.setName(name);
+  return sc;
+}
+
+function removeTagShortcut_(tag, file) {
+  try {
+    const folder = tagFolder_(tag);
+    const it = folder.getFilesByName(file.getName());
+    while (it.hasNext()) it.next().setTrashed(true);
+  } catch (e) { /* best effort */ }
+}
+
+/** App action: tag (or untag) a filed receipt. { receiptId, tag: 'Homeschool' | '', applyCategory: true|false } */
+function handleTag_(payload) {
+  const id = String(payload.receiptId || '').trim();
+  if (!id) return { ok: false, error: 'bad_request', message: 'Need receiptId.' };
+  const tag = cleanTag_(payload.tag);
+  const ss = getSpreadsheet_();
+  ensureTabs_(ss);
+  const sh = ss.getSheetByName(CONFIG.TABS.RECEIPTS);
+  const ex = findReceiptById_(sh, id);
+  if (!ex) return { ok: false, error: 'not_found', message: 'Receipt not found.' };
+  const cat = tag ? tagCategory_(tag) : '';
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    sh.getRange(ex.row, RC.TAG).setValue(tag);
+    const ish = ss.getSheetByName(CONFIG.TABS.ITEMS);
+    const last = ish.getLastRow();
+    if (last >= 2) {
+      const vals = ish.getRange(2, 1, last - 1, CONFIG.ITEM_HEADERS.length).getValues();
+      for (let i = 0; i < vals.length; i++) {
+        if (String(vals[i][0]) !== id) continue;
+        ish.getRange(i + 2, 11).setValue(tag);
+        if (tag && cat && payload.applyCategory) ish.getRange(i + 2, 8).setValue(cat);
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  if (ex.fileId) {
+    try {
+      const file = DriveApp.getFileById(ex.fileId);
+      if (ex.tag && ex.tag !== tag) removeTagShortcut_(ex.tag, file);
+      if (tag) fileTagShortcut_(tag, file);
+    } catch (e) { log_('warn', 'tag shortcut ' + id + ': ' + e); }
+  }
+  return { ok: true, receiptId: id, tag: tag, category: tag && payload.applyCategory ? cat : '' };
+}
+
+/* ===================================================================
  *  BUDGETS
  * =================================================================== */
 
@@ -1367,6 +1480,7 @@ function writeReceipt_(ss, sh, row, rec, status) {
   values[RC.DUP_OF - 1] = rec.duplicateOf || '';
   values[RC.BANK_TXN - 1] = rec.bankTxn || '';
   values[RC.MATCH_NOTE - 1] = rec.matchNote || '';
+  values[RC.TAG - 1] = rec.tag || '';
   sh.getRange(row, 1, 1, values.length).setValues([values]);
   // appendRow() in phase 1 gives date cells an automatic date-time format; put the column formats back
   sh.getRange(row, RC.DATE).setNumberFormat('yyyy-mm-dd');
@@ -1378,7 +1492,7 @@ function writeReceipt_(ss, sh, row, rec, status) {
   if (rec.items.length) {
     const d = dateFromYmd_(rec.date);
     const rows = rec.items.map(function (it) {
-      return [rec.id, d, rec.store, it.name, it.qty, it.unitPrice === null ? '' : it.unitPrice, it.lineTotal, it.category, rec.who, ''];
+      return [rec.id, d, rec.store, it.name, it.qty, it.unitPrice === null ? '' : it.unitPrice, it.lineTotal, it.category, rec.who, '', rec.tag || ''];
     });
     ish.getRange(ish.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
   }
@@ -1460,7 +1574,8 @@ function readReceiptRow_(sh, row) {
     source: String(v[RC.SOURCE - 1] || ''),
     pages: num_(v[RC.PAGES - 1]) || 1,
     dupOf: String(v[RC.DUP_OF - 1] || ''),
-    bankTxn: String(v[RC.BANK_TXN - 1] || '')
+    bankTxn: String(v[RC.BANK_TXN - 1] || ''),
+    tag: String(v[RC.TAG - 1] || '')
   };
 }
 
@@ -1507,6 +1622,7 @@ function buildSummary_() {
       };
       if (String(v[RC.NEEDS_REVIEW - 1] || '') === 'YES') { r.nr = 1; r.rn = String(v[RC.REVIEW_NOTES - 1] || '').slice(0, 200); }
       if (String(v[RC.DUP_OF - 1] || '')) r.dup = String(v[RC.DUP_OF - 1]);
+      if (String(v[RC.TAG - 1] || '')) r.tg = String(v[RC.TAG - 1]);
       idToIdx[r.id] = receipts.length;
       receipts.push(r);
     });
@@ -1573,9 +1689,11 @@ function buildSummary_() {
   noReceipt.sort(function (a, b) { return b.d.localeCompare(a.d); });
 
   const budgets = readBudgets_(ss);
+  const tags = readTags_(ss).map(function (t) { return { name: t.tag, category: t.category, folder: tagFolderUrl_(t.tag) }; });
   return {
     ok: true,
     v: 2,
+    tags: tags,
     generatedAt: new Date().toISOString(),
     today: today,
     currency: CONFIG.CURRENCY,
@@ -1656,6 +1774,11 @@ function ensureTabs_(ss) {
     ish.setFrozenRows(1);
     ish.getRange('B:B').setNumberFormat('yyyy-mm-dd');
     ish.getRange('F:G').setNumberFormat('#,##0.00');
+  } else {
+    const ihdr = ish.getRange(1, 1, 1, CONFIG.ITEM_HEADERS.length).getValues()[0];
+    let ihave = 0;
+    for (let i = 0; i < ihdr.length; i++) if (String(ihdr[i] || '').trim()) ihave = i + 1;
+    if (ihave < CONFIG.ITEM_HEADERS.length) ish.getRange(1, ihave + 1, 1, CONFIG.ITEM_HEADERS.length - ihave).setValues([CONFIG.ITEM_HEADERS.slice(ihave)]).setFontWeight('bold');
   }
 
   let bsh = ss.getSheetByName(CONFIG.TABS.BANK);
@@ -1681,6 +1804,14 @@ function ensureTabs_(ss) {
     gsh.getRange(1, 1, 1, CONFIG.BUDGET_HEADERS.length).setValues([CONFIG.BUDGET_HEADERS]).setFontWeight('bold');
     gsh.setFrozenRows(1);
     gsh.getRange('B:C').setNumberFormat('#,##0.00');
+  }
+
+  let tsh = ss.getSheetByName(CONFIG.TABS.TAGS);
+  if (!tsh) tsh = ss.insertSheet(CONFIG.TABS.TAGS);
+  if (tsh.getLastRow() === 0) {
+    tsh.getRange(1, 1, 1, CONFIG.TAG_HEADERS.length).setValues([CONFIG.TAG_HEADERS]).setFontWeight('bold');
+    tsh.setFrozenRows(1);
+    tsh.getRange(2, 1, CONFIG.TAGS.length, 3).setValues(CONFIG.TAGS);
   }
 
   let csh = ss.getSheetByName(CONFIG.TABS.CATEGORIES);
