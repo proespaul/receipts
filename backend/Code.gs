@@ -515,7 +515,7 @@ function findSemanticDuplicate_(ss, sh, rec, excludeRow) {
     const store = String(v[RC.STORE - 1] || '');
     if (!storesSimilar_(myStore, normStore_(store))) continue;
 
-    const otherTime = String(v[RC.TIME - 1] || '');
+    const otherTime = cellTime_(v[RC.TIME - 1]);
     let strong = false;
     if (rec.time && otherTime && minutesApart_(rec.time, otherTime) <= 2) strong = true;
     if (!strong && rec.time && otherTime && minutesApart_(rec.time, otherTime) > 2) {
@@ -554,6 +554,12 @@ function minutesApart_(t1, t2) {
   const m1 = /^(\d{1,2}):(\d{2})/.exec(t1), m2 = /^(\d{1,2}):(\d{2})/.exec(t2);
   if (!m1 || !m2) return 9999;
   return Math.abs((Number(m1[1]) * 60 + Number(m1[2])) - (Number(m2[1]) * 60 + Number(m2[2])));
+}
+
+/** Sheets turns a written "14:22" into a time value (a Date on 1899-12-30); read it back as "HH:mm". */
+function cellTime_(v) {
+  if (v instanceof Date) return (v.getHours() < 10 ? '0' : '') + v.getHours() + ':' + (v.getMinutes() < 10 ? '0' : '') + v.getMinutes();
+  return String(v || '');
 }
 
 /** Store names reduced to something comparable: "Costco Wholesale #123" → "costco" */
@@ -1484,6 +1490,7 @@ function writeReceipt_(ss, sh, row, rec, status) {
   sh.getRange(row, 1, 1, values.length).setValues([values]);
   // appendRow() in phase 1 gives date cells an automatic date-time format; put the column formats back
   sh.getRange(row, RC.DATE).setNumberFormat('yyyy-mm-dd');
+  sh.getRange(row, RC.TIME).setNumberFormat('HH:mm');
   sh.getRange(row, RC.CAPTURED_AT, 1, 2).setNumberFormat('yyyy-mm-dd hh:mm');
 
   // Items: remove any old lines for this receipt (retry case), then append
@@ -1553,7 +1560,7 @@ function readReceiptRow_(sh, row) {
     row: row,
     id: String(v[RC.ID - 1]),
     date: ymd_(v[RC.DATE - 1]),
-    time: String(v[RC.TIME - 1] || ''),
+    time: cellTime_(v[RC.TIME - 1]),
     store: String(v[RC.STORE - 1] || ''),
     storeType: String(v[RC.STORE_TYPE - 1] || ''),
     subtotal: num_(v[RC.SUBTOTAL - 1]),
