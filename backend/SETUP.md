@@ -38,4 +38,5 @@ Receipts with Source = `bank` are expenses filed from a statement; `superseded` 
 - "did not answer as a web app" → deploy with access *Anyone* and use the `/exec` URL, not `/dev`.
 - Stuck on "Will retry" → backend can't reach Claude (key missing/outage); it retries on its own, and the sheet's `Log` tab says why.
 - Bank matching looks wrong → run `rematchAll` in the editor (safe any time).
+- GitHub Pages for this repo publishes the `gh-pages` branch (that branch's existence is what switched Pages on). `main` is the source of truth: after each change, push `main` and then `git branch -f gh-pages main && git push -f origin gh-pages` — or switch Pages to `main` in the repo's Settings → Pages and drop the extra branch.
 - Updating the app: edit the files at the repo root, bump `VERSION` in `sw.js` (and `APP_VERSION` in `index.html`); phones pick it up on next open. Updating the backend: paste `Code.gs`, then Deploy → Manage deployments → edit → New version (keeps the same URL).
