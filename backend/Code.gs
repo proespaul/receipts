@@ -36,6 +36,8 @@ const CONFIG = {
   BANK_MAX_TOKENS: 12000,
   TZ: 'America/Edmonton',
   CURRENCY: 'CAD',
+  GST_RATE: 0.05,                       // Alberta: GST only. Used when the shopper says "tax was added on top" / "included"
+  TIP_PRESETS: [15, 18, 20],            // the quick-tap tip percentages the app offers
   CATEGORIES: [
     'Groceries', 'Dining & Takeout', 'Fuel', 'Vehicle', 'Household Supplies',
     'Home & Hardware', 'Clothing', 'Health & Pharmacy', 'Personal Care',
@@ -97,7 +99,7 @@ const CONFIG = {
     'Receipt ID', 'Date', 'Time', 'Store', 'Store Type', 'Item Count', 'Subtotal',
     'GST/HST', 'Other Tax', 'Tip', 'Total', 'Payment', 'Who', 'Status',
     'Needs Review', 'Review Notes', 'Photo', 'Hash', 'Captured At', 'Filed At',
-    'Photo File ID', 'Confidence', 'Source', 'Pages', 'Duplicate Of', 'Bank Txn', 'Match Note', 'Tag', 'Tag Hint'
+    'Photo File ID', 'Confidence', 'Source', 'Pages', 'Duplicate Of', 'Bank Txn', 'Match Note', 'Tag', 'Tag Hint', 'Asks'
   ],
   ITEM_HEADERS: [
     'Receipt ID', 'Date', 'Store', 'Item', 'Qty', 'Unit Price', 'Line Total',
@@ -122,7 +124,12 @@ const RC = {
   GST: 8, OTHER_TAX: 9, TIP: 10, TOTAL: 11, PAYMENT: 12, WHO: 13, STATUS: 14,
   NEEDS_REVIEW: 15, REVIEW_NOTES: 16, PHOTO: 17, HASH: 18, CAPTURED_AT: 19,
   FILED_AT: 20, FILE_ID: 21, CONFIDENCE: 22, SOURCE: 23, PAGES: 24, DUP_OF: 25,
-  BANK_TXN: 26, MATCH_NOTE: 27, TAG: 28, TAG_HINT: 29
+  BANK_TXN: 26, MATCH_NOTE: 27, TAG: 28, TAG_HINT: 29, ASKS: 30
+};
+// Questions the reader could not settle and the app asks the shopper (comma-separated in the Asks column)
+const ASK_NOTES = {
+  tip: 'Tip not shown — was one added?',
+  tax: 'Not sure whether GST is included in the total'
 };
 // Items tab columns
 const IC = { ID: 1, DATE: 2, STORE: 3, ITEM: 4, QTY: 5, UNIT: 6, LINE: 7, CATEGORY: 8, WHO: 9, NOTES: 10, TAG: 11, TAG_HINT: 12 };
@@ -247,6 +254,7 @@ function doPost(e) {
     if (action === 'tag') return json_(handleTag_(payload));
     if (action === 'tag_create') return json_(handleTagCreate_(payload));
     if (action === 'delete') return json_(handleDelete_(payload));
+    if (action === 'fix') return json_(handleFix_(payload));
     return json_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     log_('error', 'doPost ' + (payload.action || '') + ': ' + err + (err.stack ? '\n' + err.stack : ''));
@@ -442,9 +450,13 @@ function processExisting_(ss, sh, existing, pagesB64) {
   } catch (e) { /* cosmetic */ }
   if (rec.tag && !(dup && dup.strong)) { try { fileTagShortcut_(rec.tag, file); } catch (e) { log_('warn', 'tag folder ' + rec.id + ': ' + e); } }
 
-  // Line it up with the bank (only receipts that count)
+  // Line it up with the bank (only receipts that count); a match can settle the tip and the total
   if (!(dup && dup.strong)) {
-    try { reconcile_(ss, { receiptIds: [rec.id] }); } catch (e) { log_('warn', 'reconcile after ' + rec.id + ': ' + e); }
+    try {
+      reconcile_(ss, { receiptIds: [rec.id] });
+      const fresh = readReceiptRow_(sh, existing.row);
+      if (fresh && fresh.id === rec.id) { rec.tip = fresh.tip; rec.total = fresh.total; rec.asks = fresh.asks; rec.needsReview = fresh.needsReview; rec.reviewNotes = fresh.reviewNotes; rec.bankTxn = fresh.bankTxn; }
+    } catch (e) { log_('warn', 'reconcile after ' + rec.id + ': ' + e); }
   }
 
   return {
@@ -490,6 +502,7 @@ function receiptResponse_(ss, existing, duplicate) {
       source: existing.source,
       tag: existing.tag,
       tagHint: tagHintOf_(existing),
+      asks: existing.asks || [],
       items: items
     }
   };
@@ -549,6 +562,7 @@ function publicReceipt_(rec) {
     source: rec.source,
     tag: rec.tag || '',
     tagHint: tagHintOf_(rec),
+    asks: rec.asks || [],
     items: rec.items.map(function (it) {
       return { name: it.name, qty: it.qty, unitPrice: it.unitPrice, lineTotal: it.lineTotal, category: it.category, tag: it.tag || '', tagHint: it.tagHint || '' };
     })
@@ -755,7 +769,83 @@ function handleReview_(payload) {
   if (!ex) return { ok: false, error: 'not_found', message: 'Receipt not found.' };
   sh.getRange(ex.row, RC.NEEDS_REVIEW).setValue('');
   sh.getRange(ex.row, RC.REVIEW_NOTES).setValue((ex.reviewNotes ? ex.reviewNotes + ' ' : '') + '(checked ' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd') + ')');
+  sh.getRange(ex.row, RC.ASKS).setValue('');
   return { ok: true, receiptId: id };
+}
+
+/**
+ * App action: the shopper answers what the reader could not read.
+ *   { receiptId, tip: 8.00 | 0 | null, taxStatus: 'included' | 'added' | 'none' | null }
+ * tip     the gratuity in dollars (0 = none). Replaces any tip already on the row; the total moves with it.
+ * taxStatus  'included' → GST was inside the printed amount (split it out); 'added' → GST goes on top (total grows);
+ *            'none' → no tax. Leave null to keep the tax as read.
+ * Re-runs the bank match for this receipt afterwards.
+ */
+function handleFix_(payload) {
+  const id = String(payload.receiptId || '').trim();
+  if (!id) return { ok: false, error: 'bad_request', message: 'Need receiptId.' };
+  const ss = getSpreadsheet_();
+  const sh = ss.getSheetByName(CONFIG.TABS.RECEIPTS);
+  const ex = findReceiptById_(sh, id);
+  if (!ex) return { ok: false, error: 'not_found', message: 'Receipt not found.' };
+  const tipIn = payload.tip === undefined || payload.tip === null || payload.tip === '' ? null : num_(payload.tip);
+  const taxStatus = payload.taxStatus ? String(payload.taxStatus).toLowerCase() : '';
+  if (taxStatus && ['included', 'added', 'none'].indexOf(taxStatus) < 0) return { ok: false, error: 'bad_request', message: 'taxStatus must be included, added or none.' };
+  if (tipIn === null && !taxStatus) return { ok: false, error: 'bad_request', message: 'Nothing to change.' };
+  if (tipIn !== null && (tipIn < 0 || tipIn > 1000)) return { ok: false, error: 'bad_request', message: 'That tip does not look right.' };
+
+  let subtotal = ex.subtotal, gst = ex.gst, otherTax = ex.otherTax, tip = ex.tip, total = ex.total;
+  const answered = [];
+  if (taxStatus) {
+    const bill = round2_(total - (tip || 0));                 // what the receipt said before any tip
+    if (taxStatus === 'included') {
+      gst = round2_(bill - bill / (1 + CONFIG.GST_RATE));
+      subtotal = round2_(bill - gst - (otherTax || 0));
+    } else if (taxStatus === 'added') {
+      subtotal = round2_(bill - (otherTax || 0));
+      gst = round2_(subtotal * CONFIG.GST_RATE);
+      total = round2_(subtotal + gst + (otherTax || 0) + (tip || 0));
+    } else {
+      gst = 0;
+      subtotal = round2_(bill - (otherTax || 0));
+    }
+    answered.push('tax');
+  }
+  if (tipIn !== null) {
+    total = round2_(total - (tip || 0) + tipIn);
+    tip = tipIn;
+    answered.push('tip');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    sh.getRange(ex.row, RC.SUBTOTAL).setValue(subtotal === null ? '' : subtotal);
+    sh.getRange(ex.row, RC.GST).setValue(gst === null ? '' : gst);
+    sh.getRange(ex.row, RC.TIP).setValue(tip === null ? '' : tip);
+    sh.getRange(ex.row, RC.TOTAL).setValue(total);
+    const asks = (ex.asks || []).filter(function (k) { return answered.indexOf(k) < 0; });
+    sh.getRange(ex.row, RC.ASKS).setValue(asks.join(','));
+    const notes = ex.reviewNotes.split(';').map(function (x) { return x.trim(); }).filter(function (x) {
+      return x && !answered.some(function (k) { return x.indexOf(ASK_NOTES[k]) === 0; }) && !/^Subtotal \+ tax = /.test(x) && !/^Lines add to /.test(x);
+    });
+    sh.getRange(ex.row, RC.REVIEW_NOTES).setValue(notes.join('; '));
+    sh.getRange(ex.row, RC.NEEDS_REVIEW).setValue(notes.length || ex.dupOf ? 'YES' : '');
+    if (ex.bankTxn) {
+      // the amount changed: let the bank match be found again on the new total
+      const bsh = ss.getSheetByName(CONFIG.TABS.BANK);
+      const brow = findBankRow_(bsh, ex.bankTxn);
+      if (brow && Math.abs((num_(bsh.getRange(brow, BC.AMOUNT).getValue()) || 0) - total) > 0.011) {
+        bsh.getRange(brow, BC.STATUS).setValue('no_receipt'); bsh.getRange(brow, BC.RECEIPT).setValue(''); bsh.getRange(brow, BC.NOTE).setValue('');
+        sh.getRange(ex.row, RC.BANK_TXN).setValue(''); sh.getRange(ex.row, RC.MATCH_NOTE).setValue('');
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  try { reconcile_(ss, { receiptIds: [id] }); } catch (e) { log_('warn', 'reconcile after fix ' + id + ': ' + e); }
+  const now = readReceiptRow_(sh, ex.row);
+  return { ok: true, receiptId: id, subtotal: now.subtotal, gst: now.gst, otherTax: now.otherTax, tip: now.tip, total: now.total, asks: now.asks, needsReview: now.needsReview, reviewNotes: now.reviewNotes, bankTxn: now.bankTxn };
 }
 
 /* ===================================================================
@@ -787,6 +877,8 @@ function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
     '  "gst": number or null,',
     '  "other_tax": number or null,',
     '  "tip": number or null,',
+    '  "tip_possible": true when a gratuity may have been added on the card machine after the printed total and no tip line is printed (sit-down restaurant, bar or pub, food delivery, taxi, salon or barber, room service); false for counter service, drive-through, stores and online orders,',
+    '  "tax_status": "included" when a GST/HST line is printed or the receipt says tax is included; "none" when the receipt clearly charges no tax (basic groceries only, a private sale, a tax-exempt lesson); "added" when the printed total is a pre-tax amount and GST is charged on top (an invoice or quote marked plus GST); "unsure" when no tax line is visible and you cannot tell (handwritten receipts, lesson or tutoring receipts, a simple card slip),',
     '  "total": number,',
     '  "payment": "Visa" | "Mastercard" | "Debit" | "Cash" | "Amex" | "Gift card" | "PayPal" | other | null,',
     '  "confidence": number between 0 and 1,',
@@ -962,6 +1054,13 @@ function normalizeReceipt_(raw, capturedAt) {
   if (confidence !== null && confidence < 0.7) notes.push('Low confidence (' + confidence + ')');
   if (raw.notes && String(raw.notes).trim()) notes.push(String(raw.notes).trim());
 
+  // Things only the shopper knows: a tip added on the machine, GST on a receipt that shows none
+  const asks = [];
+  if (raw.tip_possible === true && !(tip > 0)) asks.push('tip');
+  const taxStatus = String(raw.tax_status || '').toLowerCase();
+  if ((taxStatus === 'unsure' || taxStatus === 'added') && !(gst > 0)) asks.push('tax');
+  asks.forEach(function (k) { notes.push(ASK_NOTES[k]); });
+
   const storeTypeRaw = String(raw.store_type || '').trim().toLowerCase();
   const storeType = CONFIG.STORE_TYPES.filter(function (s) { return s.toLowerCase() === storeTypeRaw; })[0] || 'Other';
 
@@ -980,7 +1079,8 @@ function normalizeReceipt_(raw, capturedAt) {
     payment: String(raw.payment || '').trim(),
     confidence: confidence,
     needsReview: notes.length > 0,
-    reviewNotes: notes.join('; ')
+    reviewNotes: notes.join('; '),
+    asks: asks
   };
 }
 
@@ -1365,7 +1465,8 @@ function reconcile_(ss, opts) {
     sh.getRange(2, 1, lastR - 1, CONFIG.RECEIPT_HEADERS.length).getValues().forEach(function (v, i) {
       const status = String(v[RC.STATUS - 1] || '');
       if (status !== 'ok' && status !== 'superseded') return;
-      receipts.push({ row: i + 2, id: String(v[RC.ID - 1]), date: ymd_(v[RC.DATE - 1]), store: String(v[RC.STORE - 1] || ''), storeType: String(v[RC.STORE_TYPE - 1] || ''), total: num_(v[RC.TOTAL - 1]) || 0, tip: num_(v[RC.TIP - 1]), payment: String(v[RC.PAYMENT - 1] || ''), status: status, source: String(v[RC.SOURCE - 1] || 'photo'), bankTxn: String(v[RC.BANK_TXN - 1] || ''), note: String(v[RC.MATCH_NOTE - 1] || '') });
+      receipts.push({ row: i + 2, id: String(v[RC.ID - 1]), date: ymd_(v[RC.DATE - 1]), store: String(v[RC.STORE - 1] || ''), storeType: String(v[RC.STORE_TYPE - 1] || ''), total: num_(v[RC.TOTAL - 1]) || 0, tip: num_(v[RC.TIP - 1]), payment: String(v[RC.PAYMENT - 1] || ''), status: status, source: String(v[RC.SOURCE - 1] || 'photo'), bankTxn: String(v[RC.BANK_TXN - 1] || ''), note: String(v[RC.MATCH_NOTE - 1] || ''),
+        asks: String(v[RC.ASKS - 1] || '').split(',').map(function (x) { return x.trim(); }).filter(String), reviewNotes: String(v[RC.REVIEW_NOTES - 1] || ''), dupOf: String(v[RC.DUP_OF - 1] || '') });
     });
   }
   if (!bank.length) { return out; }
@@ -1403,7 +1504,8 @@ function reconcile_(ss, opts) {
       const diff = round2_(b.amount - r.total);
       let score = 0, tip = 0;
       if (Math.abs(diff) <= 0.011) score = 100;
-      else if (diff > 0 && /restaurant/i.test(r.storeType) && diff <= Math.max(2, r.total * 0.3)) { score = 60; tip = diff; }
+      // a tip on top of the bill: only when the charge is clearly from the same place (a near-miss amount alone is a guess)
+      else if (diff > 0 && /restaurant/i.test(r.storeType) && diff <= Math.max(2, r.total * 0.3) && descMatchesStore_(b.desc, r.store)) { score = 60; tip = diff; }
       else return;
       score -= Math.abs(dayDiff) * 3;
       if (descMatchesStore_(b.desc, r.store)) score += 25;
@@ -1425,6 +1527,13 @@ function reconcile_(ss, opts) {
     if (p.tip > 0) {
       note += ' (incl. tip $' + p.tip.toFixed(2) + ')';
       writes.push([sh, p.r.row, RC.TIP, round2_((p.r.tip || 0) + p.tip)], [sh, p.r.row, RC.TOTAL, p.b.amount]);
+    }
+    if (p.r.asks && p.r.asks.indexOf('tip') >= 0) {
+      // the statement settles the tip question (none, or the exact amount above)
+      if (!(p.tip > 0) && !(p.r.tip > 0)) writes.push([sh, p.r.row, RC.TIP, 0]);
+      const asks = p.r.asks.filter(function (k) { return k !== 'tip'; });
+      const notes = p.r.reviewNotes.split(';').map(function (x) { return x.trim(); }).filter(function (x) { return x && x.indexOf(ASK_NOTES.tip) !== 0; });
+      writes.push([sh, p.r.row, RC.ASKS, asks.join(',')], [sh, p.r.row, RC.REVIEW_NOTES, notes.join('; ')], [sh, p.r.row, RC.NEEDS_REVIEW, notes.length || p.r.dupOf ? 'YES' : '']);
     }
     if (!descMatchesStore_(p.b.desc, p.r.store)) note += ' · ' + prettyDesc_(p.b.desc);
     writes.push([sh, p.r.row, RC.BANK_TXN, p.b.id], [sh, p.r.row, RC.MATCH_NOTE, note]);
@@ -1721,6 +1830,7 @@ function writeReceipt_(ss, sh, row, rec, status) {
   values[RC.MATCH_NOTE - 1] = rec.matchNote || '';
   values[RC.TAG - 1] = rec.tag || '';
   values[RC.TAG_HINT - 1] = rec.tag ? '' : (rec.tagHint || '');
+  values[RC.ASKS - 1] = (rec.asks || []).join(',');
   sh.getRange(row, 1, 1, values.length).setValues([values]);
   // appendRow() in phase 1 gives date cells an automatic date-time format; put the column formats back
   sh.getRange(row, RC.DATE).setNumberFormat('yyyy-mm-dd');
@@ -1817,7 +1927,8 @@ function readReceiptRow_(sh, row) {
     dupOf: String(v[RC.DUP_OF - 1] || ''),
     bankTxn: String(v[RC.BANK_TXN - 1] || ''),
     tag: String(v[RC.TAG - 1] || ''),
-    tagHint: String(v[RC.TAG_HINT - 1] || '')
+    tagHint: String(v[RC.TAG_HINT - 1] || ''),
+    asks: String(v[RC.ASKS - 1] || '').split(',').map(function (x) { return x.trim(); }).filter(String)
   };
 }
 
@@ -1863,6 +1974,8 @@ function buildSummary_() {
         bm: String(v[RC.BANK_TXN - 1] || ''), f: String(v[RC.FILE_ID - 1] || ''), c: {}, _ls: 0
       };
       if (String(v[RC.NEEDS_REVIEW - 1] || '') === 'YES') { r.nr = 1; r.rn = String(v[RC.REVIEW_NOTES - 1] || '').slice(0, 200); }
+      const asks = String(v[RC.ASKS - 1] || '').split(',').map(function (x) { return x.trim(); }).filter(String);
+      if (asks.length) { r.ask = asks; r.sub = num_(v[RC.SUBTOTAL - 1]); r.gst = num_(v[RC.GST - 1]); r.tip = num_(v[RC.TIP - 1]); }
       if (String(v[RC.DUP_OF - 1] || '')) r.dup = String(v[RC.DUP_OF - 1]);
       if (String(v[RC.TAG - 1] || '')) r.tg = String(v[RC.TAG - 1]);
       else { const th = String(v[RC.TAG_HINT - 1] || ''); if (th && th !== 'dismissed') r.th = th; }

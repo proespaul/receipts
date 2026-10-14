@@ -101,9 +101,22 @@ ul.list{list-style:none;margin:0;padding:0}
 .chk label span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chk .why{display:block;font-size:12px;color:var(--blue);font-weight:600}
 .lines .th{color:var(--blue);font-size:12px;margin-left:6px;font-weight:600}
+.fixp{background:var(--warn-soft);border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px;color:var(--ink)}
+.fixp .q{font-weight:700;margin:6px 0 6px;color:var(--warn)}
+.fixp .q:first-child{margin-top:0}
+.fixp .chips{display:flex;gap:6px;flex-wrap:wrap}
+.fixp .chip{border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 12px;font-size:13px;font-weight:600;min-height:34px}
+.fixp .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.fixp .chip small{font-weight:500;opacity:.8;margin-left:3px}
+.fixp .other{display:none;align-items:center;gap:6px;margin-top:8px}
+.fixp .other.show{display:flex}
+.fixp .other input{width:110px;min-height:36px;border:1.5px solid var(--line);border-radius:10px;padding:0 10px;font:inherit;background:var(--card);color:var(--ink)}
+.fixp .acts{display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.fixp .acts .btn{min-height:36px;padding:6px 12px;font-size:13px}
 .lines{margin:10px 0 0;padding:10px 0 0;border-top:1px dashed var(--line);font-size:14px}
-.lines div{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
-.lines div span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lines > div{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+.lines > div > span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lines > div.hintbox,.lines > div.fixp,.lines > div.muted{display:block}
 .lines .cat{color:var(--muted);font-size:12px;margin-left:6px}
 .lines .tot{border-top:1px solid var(--line);margin-top:6px;padding-top:6px;font-weight:650}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--accent);border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
@@ -410,7 +423,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 (function () {
   'use strict';
   const C = window.ReceiptsCore;
-  const APP_VERSION = '1.4.1';
+  const APP_VERSION = '1.5.0';
   // Pre-set connection so nobody has to type anything. More → Connection can still override.
   const DEFAULTS = { url: 'https://script.google.com/macros/s/AKfycbwmez6dyUMTubrqBMnQ6ehYslyQbhS6mXGPGBAP5OJ8P4sU_OsZZJEDba2sKaIT5amI/exec', token: 'prairie482' };
   const $ = function (id) { return document.getElementById(id); };
@@ -428,7 +441,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     cam: { stream: null, track: null, caps: {}, torch: false, longMode: false, parts: [], backCams: [], camIdx: 0, starting: false, off: false, zoom: 1, zoomMin: 1, zoomMax: 1, wideIdx: -1, lensBase: 1, tag: '' },
     bank: { uploading: false, status: '' },
     budget: { edit: false, values: {} },
-    attOpen: {}
+    attOpen: {},
+    fixOpen: {}
   };
 
   /* =================================================================
@@ -808,6 +822,97 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     toast('Removed' + (res.freedTxn ? ' — its bank charge is back under "Needs a look"' : ''));
     state.summaryStale = true;
     await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot(); maybeRefreshSummary(true);
+  }
+
+  /* ---- quick check: tip and GST the reader could not read ---- */
+  const GST_RATE = 0.05, TIP_PRESETS = [15, 18, 20];
+  /** What the panel needs about a receipt, from this phone's record or the spending feed. */
+  function fixInfo(receiptId) {
+    const local = state.records.find(function (r) { return r.receiptId === receiptId && r.result; });
+    if (local) { const x = local.result; return { total: Number(x.total) || 0, tip: x.tip == null ? null : Number(x.tip), gst: x.gst == null || x.gst === '' ? null : Number(x.gst), asks: x.asks || [], bm: false, store: x.store }; }
+    const s = state.summary; const idx = s && s._byId ? s._byId[receiptId] : -1;
+    if (idx == null || idx < 0) return null;
+    const r = s.receipts[idx];
+    return { total: r.t, tip: r.tip == null ? null : r.tip, gst: r.gst == null ? null : r.gst, asks: r.ask || [], bm: !!r.bm, store: r.s };
+  }
+  /** The questions for a receipt: what the reader asked, or both when opened by hand. */
+  function fixPanelHtml(receiptId, info, manual) {
+    if (!info) return '';
+    const askTip = manual || info.asks.indexOf('tip') >= 0, askTax = manual || info.asks.indexOf('tax') >= 0;
+    if (!askTip && !askTax) return '';
+    const bill = r2(info.total - (info.tip || 0));
+    let h = '<div class="fixp" data-rid="' + esc(receiptId) + '">';
+    if (askTip) {
+      if (info.bm) h += '<div class="q">Tip</div><div class="small">Matched to a bank charge, so the statement already settles what was paid' + (info.tip ? ' (tip ' + money(info.tip) + ')' : '') + '.</div>';
+      else {
+        h += '<div class="q">Did you add a tip on the ' + money(bill) + '?</div><div class="chips">' +
+          '<button class="chip' + (info.tip === 0 ? ' on' : '') + '" data-act="chip" data-q="tip" data-v="0">None</button>' +
+          TIP_PRESETS.map(function (p) { return '<button class="chip" data-act="chip" data-q="tip" data-v="pct:' + p + '">' + p + '%<small>' + money(bill * p / 100) + '</small></button>'; }).join('') +
+          '<button class="chip' + (info.tip > 0 ? ' on' : '') + '" data-act="chip" data-q="tip" data-v="other">Other</button></div>' +
+          '<div class="other' + (info.tip > 0 ? ' show' : '') + '" data-q="tip"><span>$</span><input type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="' + (info.tip > 0 ? info.tip : '') + '" aria-label="Tip amount"></div>';
+      }
+    }
+    if (askTax) {
+      const inside = r2(bill - bill / (1 + GST_RATE)), onTop = r2(bill * GST_RATE);
+      h += '<div class="q">GST on the ' + money(bill) + '?</div><div class="chips">' +
+        '<button class="chip" data-act="chip" data-q="tax" data-v="included">Included<small>' + money(inside) + ' of it</small></button>' +
+        '<button class="chip" data-act="chip" data-q="tax" data-v="added">Added on top<small>+' + money(onTop) + '</small></button>' +
+        '<button class="chip" data-act="chip" data-q="tax" data-v="none">No tax</button></div>';
+    }
+    h += '<div class="acts"><button class="btn small tint" data-act="fix-save" data-rid="' + esc(receiptId) + '">Save</button>' + (!manual ? '<button class="btn small" data-act="review" data-rid="' + esc(receiptId) + '">Leave as read</button>' : '') + '</div></div>';
+    return h;
+  }
+  function readFixPanel(box) {
+    const out = {};
+    const tipChip = box.querySelector('.chip.on[data-q=tip]');
+    if (tipChip) {
+      const v = tipChip.dataset.v;
+      const info = fixInfo(box.dataset.rid) || { total: 0, tip: 0 };
+      const bill = r2(info.total - (info.tip || 0));
+      if (v === '0') out.tip = 0;
+      else if (v.indexOf('pct:') === 0) out.tip = r2(bill * Number(v.slice(4)) / 100);
+      else { const n = Number(box.querySelector('.other[data-q=tip] input').value); if (isFinite(n) && n >= 0) out.tip = r2(n); else out.tipBad = true; }
+    }
+    const taxChip = box.querySelector('.chip.on[data-q=tax]');
+    if (taxChip) out.taxStatus = taxChip.dataset.v;
+    return out;
+  }
+  function rerenderFor(el) {
+    if (el.closest('#view-recent')) renderRecords();
+    else if (el.closest('#sheet')) { const rid = el.dataset.rid; if (state.summary && state.summary._byId && state.summary._byId[rid] >= 0) openReceipt(state.summary._byId[rid]); }
+    else renderSpend();
+  }
+  async function saveFix(receiptId, box, btn) {
+    const ans = readFixPanel(box);
+    if (ans.tipBad) { toast('Type the tip amount'); return; }
+    if (ans.tip === undefined && !ans.taxStatus) { toast('Pick an answer first'); return; }
+    const payload = { action: 'fix', receiptId: receiptId };
+    if (ans.tip !== undefined) payload.tip = ans.tip;
+    if (ans.taxStatus) payload.taxStatus = ans.taxStatus;
+    if (btn) btn.disabled = true;
+    const res = await postAction(payload);
+    if (btn) btn.disabled = false;
+    if (!res) return;
+    for (const r of state.records) {
+      if (r.receiptId !== receiptId || !r.result) continue;
+      const x = r.result; x.tip = res.tip; x.total = res.total; x.gst = res.gst; x.subtotal = res.subtotal; x.asks = res.asks || []; x.needsReview = !!res.needsReview; x.reviewNotes = res.reviewNotes || '';
+      await C.putRecord(r);
+    }
+    const s = state.summary;
+    if (s && s._byId && s._byId[receiptId] >= 0) {
+      const r = s.receipts[s._byId[receiptId]];
+      const f = r.t > 0 ? res.total / r.t : 1;
+      Object.keys(r.c).forEach(function (k) { r.c[k] = r2(r.c[k] * f); });
+      r.t = res.total; r.tip = res.tip; r.gst = res.gst; r.sub = res.subtotal;
+      if (res.asks && res.asks.length) r.ask = res.asks; else delete r.ask;
+      if (res.needsReview) { r.nr = 1; r.rn = res.reviewNotes; } else { delete r.nr; delete r.rn; }
+      if (res.bankTxn) r.bm = res.bankTxn; else delete r.bm;
+    }
+    delete state.fixOpen[receiptId];
+    toast('Updated — total ' + money(res.total) + (res.bankTxn ? ' · matched to the bank' : ''));
+    state.summaryStale = true;
+    await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot(); maybeRefreshSummary(true);
+    if (!$('sheet').classList.contains('hidden') && state.summary && state.summary._byId && state.summary._byId[receiptId] >= 0) openReceipt(state.summary._byId[receiptId]);
   }
 
   /** "Not a Homeschool receipt": the hint goes away on every phone. */
@@ -1200,10 +1305,12 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
           '<div class="tot"><span>Total' + (rec.payment ? ' · ' + esc(rec.payment) : '') + '</span><span>' + money(rec.total) + '</span></div>' +
           (r.duplicateStrength === 'strong' ? '<div class="muted small" style="display:block;margin-top:6px">Same purchase was already filed (' + esc(r.duplicateOf) + '), so this copy is not counted. <button class="btn small" data-act="keep" data-rid="' + esc(r.receiptId) + '">Keep both</button></div>' : '') +
           (r.duplicateStrength === 'possible' ? '<div class="muted small" style="display:block;margin-top:6px">Looks like it may already be filed. <button class="btn small" data-act="remove" data-rid="' + esc(r.receiptId) + '">Remove this copy</button> <button class="btn small" data-act="keep" data-rid="' + esc(r.receiptId) + '">Keep both</button></div>' : '') +
-          (rec.needsReview && r.duplicateStrength !== 'possible' ? '<div class="muted small" style="display:block;margin-top:6px">⚠️ ' + esc(rec.reviewNotes || 'Please check this one') + ' <button class="btn small" data-act="review" data-rid="' + esc(r.receiptId) + '">Looks right</button></div>' : '') +
+          (rec.needsReview && r.duplicateStrength !== 'possible' && !(rec.asks && rec.asks.length) ? '<div class="muted small" style="display:block;margin-top:6px">⚠️ ' + esc(rec.reviewNotes || 'Please check this one') + ' <button class="btn small" data-act="review" data-rid="' + esc(r.receiptId) + '">Looks right</button></div>' : '') +
+          (rec.asks && rec.asks.length ? '<div class="muted small" style="display:block;margin-top:6px">⚠️ ' + esc(rec.reviewNotes || '') + '</div>' + fixPanelHtml(r.receiptId, fixInfo(r.receiptId), false) : (state.fixOpen[r.receiptId] ? fixPanelHtml(r.receiptId, fixInfo(r.receiptId), true) : '')) +
           (hint ? '<div class="hintbox"><b>Looks like a ' + esc(hint) + ' expense</b> — the 🏷️? lines fit the claim rules.<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.receiptId) + '" data-tag="' + esc(hint) + '">🏷️ Tag as ' + esc(hint) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.receiptId) + '">Not ' + esc(hint) + '</button></div></div>' : '') +
           '<div style="display:block;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
           (r.receiptId ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.receiptId) + '" data-cur="' + esc(rec.tag || '') + '">🏷️ ' + (rec.tag ? 'Change tag' : 'Tag') + '</button>' : '') +
+          (r.receiptId && !(rec.asks && rec.asks.length) ? '<button class="btn small" data-act="fix-open" data-rid="' + esc(r.receiptId) + '">Tip / tax</button>' : '') +
           (rec.photoUrl ? '<a class="btn small" href="' + esc(rec.photoUrl) + '" target="_blank" rel="noopener">Open in Drive</a>' : '') +
           (r.receiptId ? '<button class="btn small danger" data-act="rm" data-rid="' + esc(r.receiptId) + '" data-id="' + r.id + '" style="margin-left:auto">Remove</button>' : '') + '</div>' +
           '</div>';
@@ -1247,7 +1354,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (!el) return;
     const act = el.dataset.act, id = el.dataset.id;
     if (act === 'toggle') {
-      if (e.target.closest('a') || e.target.closest('button')) return;
+      if (e.target.closest('a') || e.target.closest('button') || e.target.closest('input, select, textarea, label')) return;
       state.expanded[id] = !state.expanded[id]; renderRecords(); return;
     }
     e.stopPropagation();
@@ -1265,6 +1372,15 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (act === 'tag') { openTagPicker(el.dataset.rid, el.dataset.cur || ''); return; }
     if (act === 'hint-tag') { openTagItems(el.dataset.rid, el.dataset.tag); return; }
     if (act === 'rm') { await removeReceipt(el.dataset.rid, el.dataset.id || '', el); return; }
+    if (act === 'chip') {
+      const box = el.closest('.fixp'); const q = el.dataset.q;
+      box.querySelectorAll('.chip[data-q="' + q + '"]').forEach(function (c) { c.classList.toggle('on', c === el); });
+      const other = box.querySelector('.other[data-q="' + q + '"]');
+      if (other) { other.classList.toggle('show', el.dataset.v === 'other'); if (el.dataset.v === 'other') { const inp = other.querySelector('input'); inp.focus(); } }
+      return;
+    }
+    if (act === 'fix-open') { state.fixOpen[el.dataset.rid] = !state.fixOpen[el.dataset.rid]; rerenderFor(el); return; }
+    if (act === 'fix-save') { await saveFix(el.dataset.rid, el.closest('.fixp'), el); return; }
     if (act === 'hint-no') { await dismissHint(el.dataset.rid, el); return; }
     if (act === 'bank-expense' || act === 'bank-ignore' || act === 'bank-undo' || act === 'bank-save' || act === 'bank-cancel') { await bankAction(act, el); return; }
     if (act === 'drill') { openDrill(el.dataset.kind, el.dataset.key); return; }
@@ -1532,7 +1648,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   function attention(s) {
     if (!s) return { review: [], possible: [], removed: [], noReceipt: [], hints: [], count: 0 };
     const possible = s.receipts.filter(function (r) { return r.dup; });
-    const review = s.receipts.filter(function (r) { return r.nr && !r.dup; });
+    const review = s.receipts.filter(function (r) { return r.nr && !r.dup; }).sort(function (a, b) { return ((b.ask && b.ask.length) ? 1 : 0) - ((a.ask && a.ask.length) ? 1 : 0); });
     const removed = s.removedDups || [];
     const noReceipt = (s.bank && s.bank.noReceipt) || [];
     const hints = s.receipts.filter(function (r) { return r.th && !r.tg && !r.dup; }).sort(function (a, b) { return b.d.localeCompare(a.d); });
@@ -1716,8 +1832,9 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     }
     if (att.review.length) {
       h += '<h2 style="margin-top:8px">Receipts to check</h2>' + cut('review', att.review).map(function (r) {
+        const asks = r.ask && r.ask.length;
         return '<div class="arow"><div class="t"><span><b>' + esc(r.s) + '</b><br><span class="muted tiny">' + esc(r.d) + ' · ' + esc(r.rn || '') + '</span></span><b>' + money(r.t) + '</b></div>' +
-          '<div class="acts"><button class="btn small tint" data-act="review" data-rid="' + esc(r.id) + '">Looks right</button>' + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Fix in sheet</a>' : '') + '</div></div>';
+          (asks ? fixPanelHtml(r.id, fixInfo(r.id), false) : '<div class="acts"><button class="btn small tint" data-act="review" data-rid="' + esc(r.id) + '">Looks right</button>' + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Fix in sheet</a>' : '') + '</div>') + '</div>';
       }).join('') + more('review', att.review.length);
     }
     return h + '</div>';
@@ -1880,9 +1997,11 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       html += '<div class="lines">' + items.map(function (it) { const mark = it[5] ? '<span class="th">🏷️</span>' : (r.th && it[6] === r.th ? '<span class="th">🏷️?</span>' : ''); return '<div><span>' + esc((it[2] && it[2] !== 1 ? it[2] + ' × ' : '') + it[1]) + '<span class="cat">' + esc(s.categories[it[4]] || '') + '</span>' + mark + '</span><span>' + money(it[3]) + '</span></div>'; }).join('') + '</div>';
     } else html += '<div class="muted small" style="margin-top:8px">' + (r.src === 'bank' ? 'Filed from the bank statement (no receipt).' : 'Line items are kept for the last 15 months.') + '</div>';
     if (r.th && !r.tg) html += '<div class="hintbox"><b>Looks like a ' + esc(r.th) + ' expense</b> — the 🏷️? lines fit the claim rules.<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.id) + '" data-tag="' + esc(r.th) + '">🏷️ Tag as ' + esc(r.th) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.id) + '">Not ' + esc(r.th) + '</button></div></div>';
-    if (r.nr) html += '<div class="notice">⚠️ ' + esc(r.rn || 'Please check this one') + ' <button class="btn small" data-act="review" data-rid="' + esc(r.id) + '">Looks right</button></div>';
+    if (r.nr && !(r.ask && r.ask.length)) html += '<div class="notice">⚠️ ' + esc(r.rn || 'Please check this one') + ' <button class="btn small" data-act="review" data-rid="' + esc(r.id) + '">Looks right</button></div>';
+    if (r.ask && r.ask.length) html += '<div class="notice" style="margin-bottom:0">⚠️ ' + esc(r.rn || '') + '</div>' + fixPanelHtml(r.id, fixInfo(r.id), false);
+    else if (state.fixOpen[r.id]) html += fixPanelHtml(r.id, fixInfo(r.id), true);
     if (r.bm) html += '<div class="small good" style="margin-top:8px">✓ Matched to a bank charge</div>';
-    html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + (r.src !== 'bank' ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.id) + '" data-cur="' + esc(r.tg || '') + '">🏷️ ' + (r.tg ? 'Change tag' : 'Tag') + '</button>' : '') + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') +
+    html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + (r.src !== 'bank' ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.id) + '" data-cur="' + esc(r.tg || '') + '">🏷️ ' + (r.tg ? 'Change tag' : 'Tag') + '</button>' : '') + (r.src !== 'bank' && !(r.ask && r.ask.length) ? '<button class="btn small" data-act="fix-open" data-rid="' + esc(r.id) + '">Tip / tax</button>' : '') + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') +
       '<button class="btn small danger" data-act="rm" data-rid="' + esc(r.id) + '" style="margin-left:auto">Remove</button></div></div>';
     openSheet(r.s, html);
   }
@@ -2230,7 +2349,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   }
 
   // expose a little for tests
-  window.__receipts = { state: state, refreshRecords: refreshRecords, runSync: runSync, renderSpend: renderSpend, renderBudget: renderBudget, prepareImage: prepareImage, sliceTall: sliceTall, prepareParts: prepareParts, drainInbox: drainInbox, keyFor: keyFor, shiftKey: shiftKey, daysInKey: daysInKey, aggregate: aggregate, proposeBudget: proposeBudget, showView: showView, selectPeriod: selectPeriod, maybeRefreshSummary: maybeRefreshSummary, openDrill: openDrill, startCamera: startCamera, capture: capture, setZoom: setZoom, setupZoom: setupZoom, openTagPicker: openTagPicker, tagList: tagList, openTagItems: openTagItems, recordHint: recordHint, attention: attention };
+  window.__receipts = { state: state, refreshRecords: refreshRecords, runSync: runSync, renderSpend: renderSpend, renderBudget: renderBudget, prepareImage: prepareImage, sliceTall: sliceTall, prepareParts: prepareParts, drainInbox: drainInbox, keyFor: keyFor, shiftKey: shiftKey, daysInKey: daysInKey, aggregate: aggregate, proposeBudget: proposeBudget, showView: showView, selectPeriod: selectPeriod, maybeRefreshSummary: maybeRefreshSummary, openDrill: openDrill, startCamera: startCamera, capture: capture, setZoom: setZoom, setupZoom: setupZoom, openTagPicker: openTagPicker, tagList: tagList, openTagItems: openTagItems, recordHint: recordHint, attention: attention, fixInfo: fixInfo };
 })();
 </script>
 </body>
