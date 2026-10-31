@@ -100,7 +100,8 @@
         camOnOpen: c.camOnOpen !== false,
         camZoom: Number(c.camZoom) > 0 ? Number(c.camZoom) : 1,
         camWideId: String(c.camWideId || ''),
-        bankAccount: String(c.bankAccount || '')
+        bankAccount: String(c.bankAccount || ''),
+        viewEntity: /^[HPC]$/.test(String(c.viewEntity || '')) ? String(c.viewEntity) : ''   // the book shown on Spending / Budget
       };
     });
   }
@@ -237,6 +238,7 @@
           thumb: meta.thumb || null,
           who: meta.who || '',
           tag: meta.tag || '',
+          entity: meta.entity || '',     // '' = the card that paid decides (Household / PRO Electrical / PCW)
           result: null,
           message: ''
         };
@@ -314,6 +316,7 @@
         kind: rec.kind || 'photo',
         who: rec.who || cfg.who || '',
         tag: rec.tag || '',
+        entity: rec.entity || '',
         capturedAt: rec.capturedAt,
         clientId: rec.id
       };

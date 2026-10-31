@@ -151,6 +151,7 @@ ul.list{list-style:none;margin:0;padding:0}
 .cam .parts{position:absolute;top:56px;left:0;right:0;text-align:center}
 .cam .parts span{background:var(--accent);color:#fff;border-radius:999px;padding:6px 12px;font-weight:700;font-size:13px}
 .cbtn.tagon{background:var(--blue);color:#fff}
+.cbtn.bookon{background:#fff;color:#111}
 .picker{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9;display:flex;align-items:flex-end;justify-content:center}
 .picker .box{background:var(--card);color:var(--ink);border-radius:22px 22px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));width:100%;max-width:640px;box-shadow:0 -4px 20px rgba(0,0,0,.3)}
 .picker h3{margin-bottom:4px}
@@ -169,6 +170,15 @@ ul.list{list-style:none;margin:0;padding:0}
 .seg{display:flex;background:var(--card);border-radius:12px;padding:4px;box-shadow:var(--shadow)}
 .seg button{flex:1;border:0;background:none;border-radius:9px;padding:8px 4px;font-weight:600;font-size:14px;color:var(--muted);-webkit-tap-highlight-color:transparent}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
+.seg.books button{font-size:14px}
+.seg.books button .i{margin-right:4px}
+.seg.books button .n{display:inline-block;min-width:16px;height:16px;line-height:16px;border-radius:999px;background:var(--warn);color:#fff;font-size:10px;padding:0 4px;margin-left:5px;vertical-align:2px}
+.badge.book{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+.att .also{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:10px;font-size:13px;color:var(--muted)}
+.att .also .btn{min-height:32px;padding:4px 10px;font-size:13px}
+.chips.books{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 2px}
+.chips.books .chip{border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 12px;font-size:13px;font-weight:600;min-height:34px}
+.chips.books .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .pnav{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .pnav b{font-size:18px}
 .pnav button{border:0;background:var(--card);box-shadow:var(--shadow);border-radius:999px;width:40px;height:40px;font-size:20px;line-height:1}
@@ -281,6 +291,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
         <div class="grp">
           <button class="cbtn" id="torchBtn" type="button">⚡ Flash</button>
           <button class="cbtn" id="tagBtn" type="button">🏷️ Tag</button>
+          <button class="cbtn" id="bookBtn" type="button">📒 Auto</button>
           <button class="cbtn hidden" id="lensBtn" type="button">↔ Lens</button>
         </div>
         <button class="cbtn" id="longBtn" type="button">📜 Long receipt</button>
@@ -328,6 +339,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   <!-- SPENDING -->
   <section id="view-spend" class="hidden">
     <div class="period">
+      <div class="seg books" id="bookSeg"></div>
       <div class="seg" id="modeSeg">
         <button data-mode="month">Month</button>
         <button data-mode="quarter">Quarter</button>
@@ -345,6 +357,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 
   <!-- BUDGET -->
   <section id="view-budget" class="hidden">
+    <div class="period"><div class="seg books" id="budgetSeg"></div></div>
     <div id="budgetBody" class="bud"></div>
   </section>
 
@@ -423,7 +436,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 (function () {
   'use strict';
   const C = window.ReceiptsCore;
-  const APP_VERSION = '1.5.0';
+  const APP_VERSION = '2.0.0';
   // Pre-set connection so nobody has to type anything. More → Connection can still override.
   const DEFAULTS = { url: 'https://script.google.com/macros/s/AKfycbwmez6dyUMTubrqBMnQ6ehYslyQbhS6mXGPGBAP5OJ8P4sU_OsZZJEDba2sKaIT5amI/exec', token: 'prairie482' };
   const $ = function (id) { return document.getElementById(id); };
@@ -438,7 +451,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   const state = {
     cfg: null, records: [], summary: null, summaryAt: 0, summaryStale: true, view: 'snap',
     mode: 'month', key: '', drill: null, expanded: {}, swReg: null, busy: false,
-    cam: { stream: null, track: null, caps: {}, torch: false, longMode: false, parts: [], backCams: [], camIdx: 0, starting: false, off: false, zoom: 1, zoomMin: 1, zoomMax: 1, wideIdx: -1, lensBase: 1, tag: '' },
+    entity: 'H',          // the book shown on Spending / Budget: H (home), P (PRO Electrical), C (PCW)
+    cam: { stream: null, track: null, caps: {}, torch: false, longMode: false, parts: [], backCams: [], camIdx: 0, starting: false, off: false, zoom: 1, zoomMin: 1, zoomMax: 1, wideIdx: -1, lensBase: 1, tag: '', entity: '' },
     bank: { uploading: false, status: '' },
     budget: { edit: false, values: {} },
     attOpen: {},
@@ -459,6 +473,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       state.cfg = await C.setConfig({ url: state.cfg.url || DEFAULTS.url, token: state.cfg.token || DEFAULTS.token });
     }
     state.key = keyFor(todayYmd(), state.mode);
+    if (state.cfg.viewEntity && /^[HPC]$/.test(state.cfg.viewEntity)) state.entity = state.cfg.viewEntity;
     fillSettings();
     await refreshRecords();
     const cached = await C.kvGet('summary');
@@ -515,6 +530,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     $('lensBtn').addEventListener('click', switchLens);
     $('longBtn').addEventListener('click', toggleLong);
     $('tagBtn').addEventListener('click', function () { openTagPicker(null); });
+    $('bookBtn').addEventListener('click', openBookPicker);
+    ['bookSeg', 'budgetSeg'].forEach(function (id) { $(id).addEventListener('click', function (e) { const b = e.target.closest('button'); if (b) setEntity(b.dataset.code); }); });
     $('pickerCancel').addEventListener('click', closePicker);
     $('picker').addEventListener('click', function (e) { if (e.target === $('picker')) closePicker(); });
     $('doneBtn').addEventListener('click', finishLong);
@@ -581,11 +598,14 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (cam.stream || cam.starting) return;
     if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || !window.isSecureContext) { camFallback('This browser cannot show a live camera here.'); return; }
     cam.starting = true;
+    const gen = (cam.gen = (cam.gen || 0) + 1);
     try {
       const video = cam.backCams.length && cam.backCams[cam.camIdx]
         ? { deviceId: { exact: cam.backCams[cam.camIdx].deviceId }, width: { ideal: 2560 }, height: { ideal: 1920 } }
         : { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1920 } };
       const stream = await navigator.mediaDevices.getUserMedia({ video: video, audio: false });
+      // the shopper left the camera (another tab, app hidden) while it was warming up: let it go
+      if (gen !== cam.gen || state.view !== 'snap' || document.visibilityState === 'hidden') { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
       cam.stream = stream;
       cam.track = stream.getVideoTracks()[0];
       const v = $('camVideo');
@@ -598,11 +618,19 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       $('camOff').classList.add('hidden');
       $('camTop').classList.remove('hidden'); $('camBottom').classList.remove('hidden'); $('camHint').classList.remove('hidden');
       cam.off = false;
-      renderTagBtn();
+      renderTagBtn(); renderBookBtn();
       if (cam.torch) applyTorch(true);
       if (!cam.backCams.length) listBackCameras().then(setupZoom);
     } catch (e) {
       const name = e && e.name;
+      if (gen !== cam.gen) return;       // the camera was stopped while this start was in flight: nothing to report
+      // the camera was still held by whatever used it last (another app, a tab that just closed): one more try
+      if ((name === 'NotReadableError' || name === 'AbortError') && fromTap !== 'retry') {
+        cam.starting = false;
+        await new Promise(function (r) { setTimeout(r, 800); });
+        if (gen === cam.gen && state.view === 'snap') return startCamera('retry');
+        return;
+      }
       camFallback(name === 'NotAllowedError' || name === 'SecurityError'
         ? (fromTap ? 'Camera permission is off for this app. Allow it in your browser settings, or use the buttons here.' : 'Tap "Try the live camera" to allow the camera, or use the buttons here.')
         : (name === 'NotFoundError' ? 'No camera found on this device.' : 'The live camera is not available right now.'));
@@ -611,6 +639,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 
   function stopCamera() {
     const cam = state.cam;
+    cam.gen = (cam.gen || 0) + 1;      // a start still in flight sees this and gives its stream up
     if (cam.stream) { cam.stream.getTracks().forEach(function (t) { t.stop(); }); }
     cam.stream = null; cam.track = null;
     const v = $('camVideo'); if (v) v.srcObject = null;
@@ -661,6 +690,61 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     toast(lbl ? 'Lens: ' + lbl : 'Lens ' + (cam.camIdx + 1) + ' of ' + cam.backCams.length);
   }
 
+  /* ---- books: Household / PRO Electrical / PCW — which set of books a receipt belongs to ---- */
+  const ENT_FALLBACK = [{ code: 'H', key: 'Household', label: 'Home', icon: '🏠', folder: '' }, { code: 'P', key: 'PRO Electrical', label: 'PRO', icon: '⚡', folder: '' }, { code: 'C', key: 'PCW', label: 'PCW', icon: '🐄', folder: '' }];
+  function entities() { const s = state.summary; return s && s.entities && s.entities.length ? s.entities : ENT_FALLBACK; }
+  function entByCode(code) { return entities().find(function (e) { return e.code === code; }) || entities()[0]; }
+  function entByKey(key) { return entities().find(function (e) { return e.key === key; }) || null; }
+  function entLabel(code) { const e = entByCode(code); return e.icon + ' ' + e.label; }
+  /** Is this feed receipt in the book being shown? */
+  function inE(r) { return (r.e || 'H') === state.entity; }
+  /** The category list of one book (the feed carries one per book; older feeds have only the household list). */
+  function catsFor(code) { const s = state.summary; if (!s) return []; return (s.cats && s.cats[code]) || (code === 'H' ? s.categories : []); }
+  function budgetsFor(s, code) { const b = s && s.budgets; if (!b) return {}; return b[code] && typeof b[code] === 'object' ? b[code] : (code === 'H' && b.H === undefined && b.P === undefined && b.C === undefined ? b : {}); }
+  function proposedFor(s, code) { const b = s && s.proposed; if (!b) return {}; return b[code] && typeof b[code] === 'object' ? b[code] : {}; }
+  async function setEntity(code) {
+    if (!code || code === state.entity) return;
+    state.entity = code;
+    state.budget.edit = false;
+    if (state.view === 'spend') renderSpend();
+    if (state.view === 'budget') renderBudget();
+    window.scrollTo(0, 0);
+    state.cfg = await C.setConfig({ viewEntity: code });
+  }
+  /** The Home / PRO / PCW switch at the top of Spending and Budget, with how many things need a look in each. */
+  function renderBookSeg(id) {
+    const s = state.summary;
+    const el = $(id); if (!el) return;
+    el.innerHTML = entities().map(function (e) {
+      const n = s && id === 'bookSeg' ? attention(s, e.code).count : 0;
+      return '<button type="button" data-code="' + e.code + '" class="' + (e.code === state.entity ? 'on' : '') + '"><span class="i">' + e.icon + '</span>' + esc(e.label) + (n ? '<span class="n">' + (n > 99 ? '99+' : n) + '</span>' : '') + '</button>';
+    }).join('');
+  }
+  function renderBookBtn() {
+    const b = $('bookBtn'); const k = state.cam.entity; const e = k ? entByKey(k) : null;
+    b.textContent = e ? e.icon + ' ' + e.label : '📒 Auto';
+    b.classList.toggle('bookon', !!e);
+  }
+  /** Which book the next receipts go to: Auto (the card that paid decides) or a fixed book. Sticky while the app is open. */
+  function openBookPicker() {
+    const cur = state.cam.entity;
+    $('pickerTitle').textContent = 'Which books?';
+    $('pickerSub').textContent = 'Normally the card that paid decides: a receipt on a PRO card files under PRO. Pick a book here for cash receipts or when the card is not on the receipt. Stays on until you change it.';
+    $('pickerOpts').innerHTML = '<button class="opt' + (!cur ? ' on' : '') + '" data-ent=""><span>📒 Auto<span class="sub">by the card that paid — unknown cards ask you once</span></span>' + (!cur ? '<span>✓</span>' : '') + '</button>' +
+      entities().map(function (e) {
+        return '<button class="opt' + (cur === e.key ? ' on' : '') + '" data-ent="' + esc(e.key) + '"><span>' + e.icon + ' ' + esc(e.key) + '</span>' + (cur === e.key ? '<span>✓</span>' : '') + '</button>';
+      }).join('');
+    $('pickerOpts').querySelectorAll('.opt').forEach(function (b) {
+      b.addEventListener('click', function () {
+        closePicker();
+        state.cam.entity = b.dataset.ent || '';
+        renderBookBtn(); renderTagBtn();
+        toast(state.cam.entity ? 'New receipts go to ' + state.cam.entity : 'Back to auto — the card decides');
+      });
+    });
+    $('picker').classList.remove('hidden');
+  }
+
   /* ---- tags: a mark on a whole receipt ("Homeschool") for a claim file ---- */
   function tagList() {
     const s = state.summary;
@@ -672,7 +756,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const b = $('tagBtn'); const t = state.cam.tag;
     b.textContent = t ? '🏷️ ' + t : '🏷️ Tag';
     b.classList.toggle('tagon', !!t);
-    if (!state.cam.longMode) $('camHint').textContent = t ? 'Every receipt you snap is tagged "' + t + '" until you tap the tag to turn it off' : 'Fill the frame with the receipt, then tap the button';
+    const ent = state.cam.entity;
+    if (!state.cam.longMode) $('camHint').textContent = t ? 'Every receipt you snap is tagged "' + t + '" until you tap the tag to turn it off' : (ent ? 'Every receipt you snap files under ' + ent + ' until you tap the book to change it' : 'Fill the frame with the receipt, then tap the button');
   }
   /** receiptId = null → choose the sticky tag for new snaps; otherwise tag that filed receipt now */
   function openTagPicker(receiptId, currentTag) {
@@ -703,7 +788,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 
   /** "＋ New tag": name, category, and what counts — saved to the sheet's Tags tab from here. */
   function openNewTagForm(onCreated) {
-    const cats = (state.summary && state.summary.categories) || [];
+    const cats = catsFor('H');
     $('pickerTitle').textContent = 'New tag';
     $('pickerSub').textContent = 'A tag collects receipts for one purpose: its photos go in a Drive folder and its items make a claim list. Tell the reader what counts and it will flag likely receipts for you.';
     $('pickerOpts').innerHTML =
@@ -829,19 +914,25 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   /** What the panel needs about a receipt, from this phone's record or the spending feed. */
   function fixInfo(receiptId) {
     const local = state.records.find(function (r) { return r.receiptId === receiptId && r.result; });
-    if (local) { const x = local.result; return { total: Number(x.total) || 0, tip: x.tip == null ? null : Number(x.tip), gst: x.gst == null || x.gst === '' ? null : Number(x.gst), asks: x.asks || [], bm: false, store: x.store }; }
+    if (local) { const x = local.result; return { total: Number(x.total) || 0, tip: x.tip == null ? null : Number(x.tip), gst: x.gst == null || x.gst === '' ? null : Number(x.gst), asks: x.asks || [], bm: false, store: x.store, card: x.card || '', entity: x.entity || 'Household' }; }
     const s = state.summary; const idx = s && s._byId ? s._byId[receiptId] : -1;
     if (idx == null || idx < 0) return null;
     const r = s.receipts[idx];
-    return { total: r.t, tip: r.tip == null ? null : r.tip, gst: r.gst == null ? null : r.gst, asks: r.ask || [], bm: !!r.bm, store: r.s };
+    return { total: r.t, tip: r.tip == null ? null : r.tip, gst: r.gst == null ? null : r.gst, asks: r.ask || [], bm: !!r.bm, store: r.s, card: r.cd || '', entity: entByCode(r.e || 'H').key };
   }
   /** The questions for a receipt: what the reader asked, or both when opened by hand. */
   function fixPanelHtml(receiptId, info, manual) {
     if (!info) return '';
     const askTip = manual || info.asks.indexOf('tip') >= 0, askTax = manual || info.asks.indexOf('tax') >= 0;
-    if (!askTip && !askTax) return '';
+    const askCard = !manual && info.asks.indexOf('card') >= 0 && !!info.card;
+    if (!askTip && !askTax && !askCard) return '';
     const bill = r2(info.total - (info.tip || 0));
-    let h = '<div class="fixp" data-rid="' + esc(receiptId) + '">';
+    let h = '<div class="fixp" data-rid="' + esc(receiptId) + '" data-card="' + esc(info.card || '') + '">';
+    if (askCard) {
+      h += '<div class="q">New card ****' + esc(info.card) + ' — whose books?</div><div class="chips">' + entities().map(function (e) {
+        return '<button class="chip" data-act="chip" data-q="card" data-v="' + esc(e.key) + '">' + e.icon + ' ' + esc(e.label) + '</button>';
+      }).join('') + '</div><div class="tiny muted" style="margin-top:4px">Answer once: every receipt on this card files itself from then on.</div>';
+    }
     if (askTip) {
       if (info.bm) h += '<div class="q">Tip</div><div class="small">Matched to a bank charge, so the statement already settles what was paid' + (info.tip ? ' (tip ' + money(info.tip) + ')' : '') + '.</div>';
       else {
@@ -859,7 +950,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
         '<button class="chip" data-act="chip" data-q="tax" data-v="added">Added on top<small>+' + money(onTop) + '</small></button>' +
         '<button class="chip" data-act="chip" data-q="tax" data-v="none">No tax</button></div>';
     }
-    h += '<div class="acts"><button class="btn small tint" data-act="fix-save" data-rid="' + esc(receiptId) + '">Save</button>' + (!manual ? '<button class="btn small" data-act="review" data-rid="' + esc(receiptId) + '">Leave as read</button>' : '') + '</div></div>';
+    const onlyCard = askCard && !askTip && !askTax;
+    h += '<div class="acts"><button class="btn small tint" data-act="fix-save" data-rid="' + esc(receiptId) + '">Save</button>' + (!manual ? '<button class="btn small" data-act="review" data-rid="' + esc(receiptId) + '">' + (onlyCard ? 'Keep it under Home' : 'Leave as read') + '</button>' : '') + '</div></div>';
     return h;
   }
   function readFixPanel(box) {
@@ -875,6 +967,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     }
     const taxChip = box.querySelector('.chip.on[data-q=tax]');
     if (taxChip) out.taxStatus = taxChip.dataset.v;
+    const cardChip = box.querySelector('.chip.on[data-q=card]');
+    if (cardChip) { out.cardEntity = cardChip.dataset.v; out.card = box.dataset.card || ''; }
     return out;
   }
   function rerenderFor(el) {
@@ -885,11 +979,26 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   async function saveFix(receiptId, box, btn) {
     const ans = readFixPanel(box);
     if (ans.tipBad) { toast('Type the tip amount'); return; }
-    if (ans.tip === undefined && !ans.taxStatus) { toast('Pick an answer first'); return; }
+    if (ans.tip === undefined && !ans.taxStatus && !ans.cardEntity) { toast('Pick an answer first'); return; }
+    if (btn) btn.disabled = true;
+    // The card first: it may move the receipt (and re-read its lines for the other book's categories)
+    if (ans.cardEntity && ans.card) {
+      const cr = await postAction({ action: 'card_set', last4: ans.card, entity: ans.cardEntity, receiptId: receiptId }, 120000);
+      if (!cr) { if (btn) btn.disabled = false; return; }
+      await applyMove(receiptId, cr, ans.cardEntity);
+      if (ans.tip === undefined && !ans.taxStatus) {
+        if (btn) btn.disabled = false;
+        delete state.fixOpen[receiptId];
+        toast('Card ****' + ans.card + ' is ' + entLabel(entByKey(ans.cardEntity).code) + (cr.moved && cr.moved.length > 1 ? ' — ' + cr.moved.length + ' receipts moved' : ''));
+        state.summaryStale = true;
+        await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot(); maybeRefreshSummary(true);
+        if (!$('sheet').classList.contains('hidden') && state.summary && state.summary._byId && state.summary._byId[receiptId] >= 0) openReceipt(state.summary._byId[receiptId]);
+        return;
+      }
+    }
     const payload = { action: 'fix', receiptId: receiptId };
     if (ans.tip !== undefined) payload.tip = ans.tip;
     if (ans.taxStatus) payload.taxStatus = ans.taxStatus;
-    if (btn) btn.disabled = true;
     const res = await postAction(payload);
     if (btn) btn.disabled = false;
     if (!res) return;
@@ -913,6 +1022,77 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     state.summaryStale = true;
     await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot(); maybeRefreshSummary(true);
     if (!$('sheet').classList.contains('hidden') && state.summary && state.summary._byId && state.summary._byId[receiptId] >= 0) openReceipt(state.summary._byId[receiptId]);
+  }
+
+  /** "This one is PRO's": pick the book for a filed receipt, optionally teaching the app its card. */
+  function openMovePicker(receiptId) {
+    const info = fixInfo(receiptId) || { entity: 'Household', card: '' };
+    $('pickerTitle').textContent = 'Move to…';
+    $('pickerSub').textContent = 'The receipt, its lines and its photo move to that book.' + (info.card ? ' Tick "remember" and every receipt paid with card ****' + info.card + ' goes there from now on.' : '');
+    $('pickerOpts').innerHTML = entities().map(function (e) {
+      const on = e.key === info.entity;
+      return '<button class="opt' + (on ? ' on' : '') + '" data-ent="' + esc(e.key) + '"' + (on ? ' disabled' : '') + '><span>' + e.icon + ' ' + esc(e.key) + (on ? '<span class="sub">where it is now</span>' : '') + '</span>' + (on ? '<span>✓</span>' : '') + '</button>';
+    }).join('') + (info.card ? '<label class="switch" style="margin-top:8px"><span>Remember card ****' + esc(info.card) + ' for the book I pick</span><input type="checkbox" id="mvRemember" checked></label>' : '');
+    $('pickerOpts').querySelectorAll('.opt:not([disabled])').forEach(function (b) {
+      b.addEventListener('click', async function () {
+        const remember = !!($('mvRemember') && $('mvRemember').checked);
+        closePicker();
+        await moveReceipt(receiptId, b.dataset.ent, remember, info.card);
+      });
+    });
+    $('picker').classList.remove('hidden');
+  }
+  async function moveReceipt(receiptId, entityKey, remember, card) {
+    toast('Moving…');
+    const res = await postAction({ action: 'entity_set', receiptId: receiptId, entity: entityKey, remember: !!remember }, 120000);
+    if (!res) return;
+    await applyMove(receiptId, res, entityKey);
+    const e = entByKey(entityKey) || entByCode('H');
+    toast('Moved to ' + e.icon + ' ' + e.key + (res.remembered && card ? ' · card ****' + card + ' remembered' : '') + (res.reread ? ' · lines re-read with its categories' : ''));
+    state.summaryStale = true;
+    await refreshRecords(); if (state.view === 'spend') renderSpend(); renderAttDot(); maybeRefreshSummary(true);
+    if (!$('sheet').classList.contains('hidden') && state.summary && state.summary._byId && state.summary._byId[receiptId] >= 0) openReceipt(state.summary._byId[receiptId]);
+  }
+  /** After card_set / entity_set: this phone's record and the cached feed follow the move. */
+  async function applyMove(receiptId, res, entityKey) {
+    const e = entByKey(entityKey) || entByCode('H');
+    const serverItems = res.items || null;
+    for (const r of state.records) {
+      if (r.receiptId !== receiptId || !r.result) continue;
+      const x = r.result; x.entity = e.key;
+      if (res.asks) x.asks = res.asks; else x.asks = (x.asks || []).filter(function (k) { return k !== 'card'; });
+      if (res.needsReview != null) x.needsReview = !!res.needsReview;
+      if (res.reviewNotes != null) x.reviewNotes = res.reviewNotes;
+      if (res.total != null) x.total = res.total;
+      if (res.tip !== undefined) x.tip = res.tip;
+      if (serverItems && serverItems.length === (x.items || []).length) x.items.forEach(function (it, i) { it.category = serverItems[i].category; it.tag = serverItems[i].tag || ''; });
+      await C.putRecord(r);
+    }
+    const s = state.summary;
+    if (s && s._byId && s._byId[receiptId] >= 0) {
+      const idx = s._byId[receiptId]; const r = s.receipts[idx];
+      if (e.code === 'H') delete r.e; else r.e = e.code;
+      if (res.asks && res.asks.length) r.ask = res.asks; else delete r.ask;
+      if (res.needsReview) { r.nr = 1; r.rn = res.reviewNotes || ''; } else if (res.needsReview === false) { delete r.nr; delete r.rn; }
+      if (res.total != null) r.t = res.total;
+      delete r.bm;   // a move frees a cross-book bank match; the next refresh brings the right one
+      const its = s._itemsByR[idx] || [];
+      if (serverItems && serverItems.length === its.length) {
+        r.c = {};
+        its.forEach(function (it, i) {
+          let ci = s.categories.indexOf(serverItems[i].category); if (ci < 0) { s.categories.push(serverItems[i].category); ci = s.categories.length - 1; }
+          it[4] = ci; r.c[ci] = r2((r.c[ci] || 0) + it[3]);
+        });
+        // scale the split to the total like the backend does
+        const sum = Object.keys(r.c).reduce(function (a, k) { return a + r.c[k]; }, 0);
+        if (sum > 0) { const f = r.t / sum; Object.keys(r.c).forEach(function (k) { r.c[k] = r2(r.c[k] * f); }); }
+      }
+      // other receipts on that card that were waiting
+      (res.moved || []).forEach(function (id) { if (id !== receiptId && s._byId[id] >= 0) { const o = s.receipts[s._byId[id]]; if (e.code === 'H') delete o.e; else o.e = e.code; if (o.ask) { o.ask = o.ask.filter(function (k) { return k !== 'card'; }); if (!o.ask.length) delete o.ask; } } });
+      if (res.cards) s.cards = res.cards;
+      await C.kvSet('summary', { at: state.summaryAt, data: s });
+    }
+    for (const r of state.records) { if ((res.moved || []).indexOf(r.receiptId) >= 0 && r.receiptId !== receiptId && r.result) { r.result.entity = e.key; r.result.asks = (r.result.asks || []).filter(function (k) { return k !== 'card'; }); await C.putRecord(r); } }
   }
 
   /** "Not a Homeschool receipt": the hint goes away on every phone. */
@@ -1039,7 +1219,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     state.busy = true; renderNet();
     try {
       const prepared = await prepareParts(parts);
-      const rec = await C.enqueue(prepared.blob, { thumb: prepared.thumb, pages: prepared.pages, kind: 'photo', who: state.cfg.who, capturedAt: new Date().toISOString(), tag: state.cam.tag });
+      const rec = await C.enqueue(prepared.blob, { thumb: prepared.thumb, pages: prepared.pages, kind: 'photo', who: state.cfg.who, capturedAt: new Date().toISOString(), tag: state.cam.tag, entity: state.cam.entity });
       await refreshRecords();
       toast(rec.duplicateOf ? 'That one was already added' : 'Saved as one receipt (' + parts.length + ' parts)' + sendTail());
       registerBgSync(); kickSync();
@@ -1098,11 +1278,11 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
     if (isPdf) {
       if (file.size > 12 * 1024 * 1024) throw new Error('PDF too big');
-      return C.enqueue(file, { thumb: null, kind: 'pdf', who: state.cfg.who, capturedAt: capturedAt, tag: state.cam.tag });
+      return C.enqueue(file, { thumb: null, kind: 'pdf', who: state.cfg.who, capturedAt: capturedAt, tag: state.cam.tag, entity: state.cam.entity });
     }
     const prepared = await prepareImage(file);
     const kind = origin === 'photo' ? 'photo' : (prepared.pages ? 'screenshot' : (looksLikeScreenshot(file, prepared) ? 'screenshot' : 'photo'));
-    return C.enqueue(prepared.blob, { thumb: prepared.thumb, pages: prepared.pages, kind: kind, who: state.cfg.who, capturedAt: capturedAt, tag: state.cam.tag });
+    return C.enqueue(prepared.blob, { thumb: prepared.thumb, pages: prepared.pages, kind: kind, who: state.cfg.who, capturedAt: capturedAt, tag: state.cam.tag, entity: state.cam.entity });
   }
 
   function looksLikeScreenshot(file, prepared) {
@@ -1264,7 +1444,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       const actions = [];
       if (r.status === 'error') actions.push('<button class="btn small" data-act="retry" data-id="' + r.id + '">Retry now</button>');
       if (r.status !== 'uploading') actions.push('<button class="btn small danger" data-act="del" data-id="' + r.id + '">Delete</button>');
-      const what = (r.kind === 'pdf' ? 'PDF receipt' : (r.kind === 'screenshot' ? 'Screenshot' : 'Receipt') + (r.pages && r.pages.length > 1 ? ' (' + r.pages.length + ' parts)' : '')) + (r.tag ? '<span class="badge blue">🏷️ ' + esc(r.tag) + '</span>' : '');
+      const what = (r.kind === 'pdf' ? 'PDF receipt' : (r.kind === 'screenshot' ? 'Screenshot' : 'Receipt') + (r.pages && r.pages.length > 1 ? ' (' + r.pages.length + ' parts)' : '')) + (r.entity && entByKey(r.entity) ? '<span class="badge book">' + entLabel(entByKey(r.entity).code) + '</span>' : '') + (r.tag ? '<span class="badge blue">🏷️ ' + esc(r.tag) + '</span>' : '');
       return '<li class="item">' + thumbHtml(r) +
         '<div class="body"><div class="title"><span>' + what + '</span><span class="amt muted tiny">' + esc(timeAgo(r.createdAt)) + '</span></div>' +
         '<div class="sub">' + statusText(r) + '</div>' +
@@ -1287,6 +1467,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       const dup = r.duplicate ? '<span class="badge ok">already filed</span>' : '';
       const hint = recordHint(r);
       const tagB = rec.tag ? '<span class="badge blue">🏷️ ' + esc(rec.tag) + '</span>' : (hint ? '<span class="badge hint">🏷️ ' + esc(hint) + '?</span>' : '');
+      const bookB = rec.entity && rec.entity !== 'Household' && entByKey(rec.entity) ? '<span class="badge book">' + entLabel(entByKey(rec.entity).code) + '</span>' : '';
       let lines = '';
       if (hint && !open) {
         const names = items.filter(function (it) { return it.tagHint === hint; }).map(function (it) { return it.name; });
@@ -1310,13 +1491,14 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
           (hint ? '<div class="hintbox"><b>Looks like a ' + esc(hint) + ' expense</b> — the 🏷️? lines fit the claim rules.<div class="acts"><button class="btn small tint" data-act="hint-tag" data-rid="' + esc(r.receiptId) + '" data-tag="' + esc(hint) + '">🏷️ Tag as ' + esc(hint) + '</button><button class="btn small" data-act="hint-no" data-rid="' + esc(r.receiptId) + '">Not ' + esc(hint) + '</button></div></div>' : '') +
           '<div style="display:block;margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
           (r.receiptId ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.receiptId) + '" data-cur="' + esc(rec.tag || '') + '">🏷️ ' + (rec.tag ? 'Change tag' : 'Tag') + '</button>' : '') +
+          (r.receiptId ? '<button class="btn small" data-act="move" data-rid="' + esc(r.receiptId) + '">' + (rec.entity && rec.entity !== 'Household' && entByKey(rec.entity) ? entByKey(rec.entity).icon + ' Move…' : '📒 Move…') + '</button>' : '') +
           (r.receiptId && !(rec.asks && rec.asks.length) ? '<button class="btn small" data-act="fix-open" data-rid="' + esc(r.receiptId) + '">Tip / tax</button>' : '') +
           (rec.photoUrl ? '<a class="btn small" href="' + esc(rec.photoUrl) + '" target="_blank" rel="noopener">Open in Drive</a>' : '') +
           (r.receiptId ? '<button class="btn small danger" data-act="rm" data-rid="' + esc(r.receiptId) + '" data-id="' + r.id + '" style="margin-left:auto">Remove</button>' : '') + '</div>' +
           '</div>';
       }
       return '<li class="item" data-act="toggle" data-id="' + r.id + '">' + thumbHtml(r) +
-        '<div class="body"><div class="title"><span>' + esc(rec.store || 'Receipt') + badge + dup + tagB + '</span><span class="amt">' + money(rec.total) + '</span></div>' +
+        '<div class="body"><div class="title"><span>' + esc(rec.store || 'Receipt') + badge + dup + bookB + tagB + '</span><span class="amt">' + money(rec.total) + '</span></div>' +
         '<div class="sub">' + esc(rec.date || '') + ' · ' + items.length + (items.length === 1 ? ' item' : ' items') + (rec.who ? ' · ' + esc(rec.who) : '') + (rec.source === 'pdf' ? ' · PDF' : '') + '</div>' + lines + '</div></li>';
     }).join('');
   }
@@ -1371,6 +1553,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (act === 'review') { await markReviewed(el.dataset.rid, el); return; }
     if (act === 'tag') { openTagPicker(el.dataset.rid, el.dataset.cur || ''); return; }
     if (act === 'hint-tag') { openTagItems(el.dataset.rid, el.dataset.tag); return; }
+    if (act === 'move') { openMovePicker(el.dataset.rid); return; }
+    if (act === 'book') { await setEntity(el.dataset.code); return; }
     if (act === 'rm') { await removeReceipt(el.dataset.rid, el.dataset.id || '', el); return; }
     if (act === 'chip') {
       const box = el.closest('.fixp'); const q = el.dataset.q;
@@ -1472,6 +1656,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (!navigator.onLine) { toast('Need signal to check a statement'); return; }
     const acctInput = $('bankAcct');
     const account = ((acctInput && acctInput.value) || state.cfg.bankAccount || '').trim();
+    const bookCode = state.bank.entity || state.entity;
+    const bookKey = entByCode(bookCode).key;
     state.bank.uploading = true;
     const totals = { added: 0, already: 0, matched: 0, noReceipt: 0, autoExpense: 0, ignored: 0, credits: 0, failed: [] };
     for (let i = 0; i < files.length; i++) {
@@ -1479,7 +1665,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       state.bank.status = 'Reading ' + (files.length > 1 ? (i + 1) + ' of ' + files.length + ' — ' : '') + (f.name || 'file') + '…';
       renderSpend();
       try {
-        let payload = { action: 'bank', name: f.name || '', account: account };
+        let payload = { action: 'bank', name: f.name || '', account: account, entity: bookKey };
         if (/\.csv$/i.test(f.name || '') || /csv|text\/plain/i.test(f.type || '')) {
           payload.kind = 'csv'; payload.data = await f.text();
         } else if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '')) {
@@ -1502,9 +1688,11 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (totals.already) parts.push(totals.already + ' already had');
     if (totals.matched) parts.push(totals.matched + ' matched to receipts');
     if (totals.autoExpense) parts.push(totals.autoExpense + ' filed by rule');
-    state.bank.status = (parts.length ? parts.join(' · ') : 'Nothing new') + (totals.noReceipt ? ' · ' + totals.noReceipt + ' with no receipt' : '') + (totals.failed.length ? ' · ' + totals.failed.join('; ') : '');
-    toast(totals.added ? 'Statement checked ✓' : (totals.failed.length ? 'Could not read that' : 'Nothing new in that statement'));
+    state.bank.status = (parts.length ? parts.join(' · ') : 'Nothing new') + (totals.noReceipt ? ' · ' + totals.noReceipt + ' with no receipt' : '') + (totals.failed.length ? ' · ' + totals.failed.join('; ') : '') + (bookCode !== 'H' ? ' · filed under ' + entLabel(bookCode) : '');
+    toast(totals.added ? 'Statement checked ✓' + (bookCode !== 'H' ? ' (' + entByCode(bookCode).label + ')' : '') : (totals.failed.length ? 'Could not read that' : 'Nothing new in that statement'));
     if (account) { state.cfg = await C.setConfig({ bankAccount: '' }); const cur = $('bankAcct'); if (cur) cur.value = ''; }   // the name was for this upload only
+    if (bookCode !== state.entity) { state.bank.entity = ''; await setEntity(bookCode); }   // show the book the statement went to
+    state.bank.entity = '';
     state.summaryStale = true;
     await maybeRefreshSummary(true);
     renderSpend();
@@ -1645,13 +1833,15 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     return dk && dk.from >= s.itemsFrom;
   }
 
-  function attention(s) {
+  /** What needs a look — in one book (code) or across all of them (no code). */
+  function attention(s, code) {
     if (!s) return { review: [], possible: [], removed: [], noReceipt: [], hints: [], count: 0 };
-    const possible = s.receipts.filter(function (r) { return r.dup; });
-    const review = s.receipts.filter(function (r) { return r.nr && !r.dup; }).sort(function (a, b) { return ((b.ask && b.ask.length) ? 1 : 0) - ((a.ask && a.ask.length) ? 1 : 0); });
-    const removed = s.removedDups || [];
-    const noReceipt = (s.bank && s.bank.noReceipt) || [];
-    const hints = s.receipts.filter(function (r) { return r.th && !r.tg && !r.dup; }).sort(function (a, b) { return b.d.localeCompare(a.d); });
+    const inB = function (r) { return !code || (r.e || 'H') === code; };
+    const possible = s.receipts.filter(function (r) { return r.dup && inB(r); });
+    const review = s.receipts.filter(function (r) { return r.nr && !r.dup && inB(r); }).sort(function (a, b) { return ((b.ask && b.ask.length) ? 1 : 0) - ((a.ask && a.ask.length) ? 1 : 0); });
+    const removed = (s.removedDups || []).filter(function (r) { const i = s._byId ? s._byId[r.of] : -1; return !code || (i >= 0 ? (s.receipts[i].e || 'H') : 'H') === code; });
+    const noReceipt = ((s.bank && s.bank.noReceipt) || []).filter(inB);
+    const hints = s.receipts.filter(function (r) { return r.th && !r.tg && !r.dup && inB(r); }).sort(function (a, b) { return b.d.localeCompare(a.d); });
     return { review: review, possible: possible, removed: removed, noReceipt: noReceipt, hints: hints, count: review.length + possible.length + removed.length + noReceipt.length + hints.length };
   }
   /** Names of the lines the reader flagged for the receipt's suggested tag (from the spending feed). */
@@ -1691,6 +1881,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 
   function renderSpend() {
     const s = state.summary;
+    renderBookSeg('bookSeg');
     $('modeSeg').querySelectorAll('button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === state.mode); });
     const body = $('spendBody');
     const t = todayYmd();
@@ -1707,17 +1898,23 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       return;
     }
     const mode = state.mode, key = state.key;
-    const cur = aggregate(s, function (r) { return inKey(r.d, key, mode); });
+    const cur = aggregate(s, function (r) { return inE(r) && inKey(r.d, key, mode); });
     const prevKey = mode === 'all' ? null : shiftKey(key, mode, -1);
-    const prev = prevKey ? aggregate(s, function (r) { return inKey(r.d, prevKey, mode); }) : null;
+    const prev = prevKey ? aggregate(s, function (r) { return inE(r) && inKey(r.d, prevKey, mode); }) : null;
     const dk = daysInKey(key, mode);
     const asOf = state.summaryAt ? 'Updated ' + timeAgo(state.summaryAt) : '';
-    const att = attention(s);
+    const att = attention(s, state.entity);
+    const book = entByCode(state.entity);
     let html = '';
 
     // ---- Needs attention ----
-    if (att.count) html += attentionHtml(s, att);
-    else if (s.bank && s.bank.rows) html += '<div class="notice ok">✓ Nothing needs a look. Every bank charge on file has a receipt.</div>';
+    const elsewhere = entities().filter(function (e) { return e.code !== state.entity; }).map(function (e) { return { e: e, n: attention(s, e.code).count }; }).filter(function (x) { return x.n; });
+    if (att.count) html += attentionHtml(s, att, elsewhere);
+    else {
+      const rows = (s.bank && s.bank.accounts || []).some(function (a) { return a.e === state.entity; });
+      if (rows || elsewhere.length) html += '<div class="notice ok">✓ Nothing needs a look' + (rows ? ' under ' + esc(book.label) + '. Every bank charge on file has a receipt.' : ' under ' + esc(book.label) + '.') +
+        (elsewhere.length ? '<div class="also" style="padding-top:8px">' + elsewhere.map(function (x) { return '<button class="btn small" data-act="book" data-code="' + x.e.code + '">' + x.e.icon + ' ' + esc(x.e.label) + ': ' + x.n + ' to look at</button>'; }).join('') + '</div>' : '') + '</div>';
+    }
 
     // ---- Total card ----
     let delta = '';
@@ -1728,8 +1925,9 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
       delta = '<div class="delta ' + (up ? 'bad' : 'good') + '">' + (up ? '▲' : '▼') + ' ' + money(Math.abs(diff)) + (pct !== null ? ' (' + (up ? '+' : '−') + Math.abs(pct) + '%)' : '') + ' vs ' + esc(labelFor(prevKey, mode, true)) + '</div>';
     }
     let budgetLine = '';
-    if (mode === 'month' && s.budgets && Object.keys(s.budgets).length) {
-      const bt = Object.keys(s.budgets).reduce(function (a, k) { return a + (Number(s.budgets[k]) || 0); }, 0);
+    const bud = budgetsFor(s, state.entity);
+    if (mode === 'month' && Object.keys(bud).length) {
+      const bt = Object.keys(bud).reduce(function (a, k) { return a + (Number(bud[k]) || 0); }, 0);
       if (bt > 0) {
         const left = r2(bt - cur.total);
         budgetLine = '<div class="delta ' + (left >= 0 ? 'good' : 'bad') + '" data-act="goto" data-view="budget" style="cursor:pointer">🎯 ' + (left >= 0 ? money(left) + ' left of ' + money0(bt) + ' budget' : money(-left) + ' over the ' + money0(bt) + ' budget') + ' ›</div>';
@@ -1738,7 +1936,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const perDay = dk && dk.elapsed ? cur.total / dk.elapsed : 0;
     const topCat = cur.byCategory[0];
     html += '<div class="card">' +
-      '<div class="row"><div class="muted small">' + esc(mode === 'all' ? (s.receipts.length ? firstDate(s) + ' → ' + t : 'All time') : labelFor(key, mode)) + '</div><div class="tiny muted">' + esc(asOf) + (navigator.onLine ? '' : ' · offline') + '</div></div>' +
+      '<div class="row"><div class="muted small">' + esc((state.entity !== 'H' ? book.icon + ' ' + book.key + ' · ' : '') + (mode === 'all' ? (cur.count ? firstDate(s) + ' → ' + t : 'All time') : labelFor(key, mode))) + '</div><div class="tiny muted">' + esc(asOf) + (navigator.onLine ? '' : ' · offline') + '</div></div>' +
       '<div class="bigtotal">' + money(cur.total) + '</div>' + delta + budgetLine +
       '<div class="kpis"><div class="kpi"><div class="v">' + cur.count + '</div><div class="l">receipts</div></div>' +
       '<div class="kpi"><div class="v">' + (dk ? money(perDay) : money(cur.count ? cur.total / cur.count : 0)) + '</div><div class="l">' + (dk ? 'per day' : 'per receipt') + '</div></div>' +
@@ -1763,9 +1961,9 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     // ---- Tags (claim files) ----
     const tagTotals = {};
     cur.idxs.forEach(function (i) { const r = s.receipts[i]; if (r.tg) { if (!tagTotals[r.tg]) tagTotals[r.tg] = { total: 0, count: 0 }; tagTotals[r.tg].total += r.t; tagTotals[r.tg].count++; } });
-    const tagRows = tagList().map(function (t) { return { name: t.name, folder: t.folder, total: r2(tagTotals[t.name] ? tagTotals[t.name].total : 0), count: tagTotals[t.name] ? tagTotals[t.name].count : 0 }; });
+    const tagRows = tagList().map(function (t) { return { name: t.name, folder: tagFolderFor(t), total: r2(tagTotals[t.name] ? tagTotals[t.name].total : 0), count: tagTotals[t.name] ? tagTotals[t.name].count : 0 }; });
     Object.keys(tagTotals).forEach(function (k) { if (!tagRows.some(function (t) { return t.name === k; })) tagRows.push({ name: k, folder: '', total: r2(tagTotals[k].total), count: tagTotals[k].count }); });
-    if (tagRows.some(function (t) { return t.count; }) || tagRows.length) {
+    if (state.entity === 'H' ? tagRows.length : tagRows.some(function (t) { return t.count; })) {
       html += '<h2>Tagged receipts</h2><div class="card"><ul class="toplist">' + tagRows.map(function (t) {
         return '<li data-act="drill" data-kind="tag" data-key="' + esc(t.name) + '"><span class="n">🏷️ ' + esc(t.name) + '</span><span class="c">' + t.count + (t.count === 1 ? ' receipt' : ' receipts') + '</span><span class="t">' + money(t.total) + '</span></li>';
       }).join('') + '</ul><div class="tiny muted" style="margin-top:8px">Tap a tag for the list of receipts and items in this period. Each tag also has a folder in Drive with every tagged receipt photo.</div></div>';
@@ -1780,12 +1978,17 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const acct = body.querySelector('#bankAcct');
     if (acct && typedAcct !== null) acct.value = typedAcct;
     if (acct) acct.addEventListener('change', async function () { state.cfg = await C.setConfig({ bankAccount: acct.value.trim() }); });
+    const bb = body.querySelector('#bankBooks');
+    if (bb) bb.addEventListener('click', function (e) { const c = e.target.closest('.chip'); if (!c) return; state.bank.entity = c.dataset.code; bb.querySelectorAll('.chip').forEach(function (x) { x.classList.toggle('on', x === c); }); });
   }
 
-  function firstDate(s) { let m = null; s.receipts.forEach(function (r) { if (!m || r.d < m) m = r.d; }); return m || ''; }
+  function firstDate(s) { let m = null; s.receipts.forEach(function (r) { if (inE(r) && (!m || r.d < m)) m = r.d; }); return m || ''; }
+  /** A tag's Drive folder in the book being shown (made on first use, so it may not exist yet). */
+  function tagFolderFor(t) { if (!t) return ''; if (t.folders && t.folders[state.entity]) return t.folders[state.entity]; return state.entity === 'H' ? (t.folder || '') : ''; }
 
-  function attentionHtml(s, att) {
-    let h = '<div class="card att"><h3>Needs a look <span class="badge">' + att.count + '</span></h3>';
+  function attentionHtml(s, att, elsewhere) {
+    const book = entByCode(state.entity);
+    let h = '<div class="card att"><h3>Needs a look' + (state.entity !== 'H' ? ' · ' + book.icon + ' ' + esc(book.label) : '') + ' <span class="badge">' + att.count + '</span></h3>';
     const LIM = 5;
     const more = function (kind, n) { return n > LIM && !state.attOpen[kind] ? '<div class="more"><button class="btn quiet small" data-act="att-more" data-kind="' + kind + '">Show all ' + n + '</button></div>' : ''; };
     const cut = function (kind, list) { return state.attOpen[kind] ? list : list.slice(0, LIM); };
@@ -1797,7 +2000,8 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
         const picking = state.attOpen['pick:' + t.id];
         let acts;
         if (picking) {
-          acts = '<div class="catpick"><select class="f">' + s.categories.map(function (c) { return '<option' + (c === guessCat(t.desc) ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
+          const bcats = catsFor(t.e || 'H'); const guess = guessCat(t.desc, bcats);
+          acts = '<div class="catpick"><select class="f">' + bcats.map(function (c) { return '<option' + (c === guess ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
             '<label><input type="checkbox" checked> Always file "' + esc(shortDesc(t.desc)) + '" this way</label>' +
             '<div class="acts"><button class="btn small tint" data-act="bank-save" data-txn="' + esc(t.id) + '">Save</button><button class="btn small quiet" data-act="bank-cancel" data-txn="' + esc(t.id) + '">Cancel</button></div></div>';
         } else {
@@ -1837,6 +2041,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
           (asks ? fixPanelHtml(r.id, fixInfo(r.id), false) : '<div class="acts"><button class="btn small tint" data-act="review" data-rid="' + esc(r.id) + '">Looks right</button>' + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Fix in sheet</a>' : '') + '</div>') + '</div>';
       }).join('') + more('review', att.review.length);
     }
+    if (elsewhere && elsewhere.length) h += '<div class="also">Also:' + elsewhere.map(function (x) { return '<button class="btn small" data-act="book" data-code="' + x.e.code + '">' + x.e.icon + ' ' + esc(x.e.label) + ' · ' + x.n + '</button>'; }).join('') + '</div>';
     return h + '</div>';
   }
   function photoLink(r) { return r.f ? '<a class="btn small" href="https://drive.google.com/file/d/' + esc(r.f) + '/view" target="_blank" rel="noopener">Photo</a>' : ''; }
@@ -1849,22 +2054,28 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     return (s || String(d || '')).toLowerCase().replace(/(^|[\s\-'])([a-z])/g, function (m, p, c) { return p + c.toUpperCase(); });
   }
   const CAT_GUESS = [[/telus|rogers|bell|shaw|koodo|fido|freedom|sasktel|xplore|starlink|internet|mobility|wireless/i, 'Phone & Internet'], [/atco|epcor|enmax|direct energy|fortis|utility|utilities|power|gas co|water|county of|town of|m\.d\. of|md of/i, 'Utilities & Bills'], [/insur|intact|wawanesa|tdi|co-operators|cooperators|ama |alberta motor/i, 'Insurance'], [/netflix|spotify|disney|prime|apple\.com|google|youtube|crave|amazon prime|subscription|membership|gym/i, 'Subscriptions & Memberships'], [/fee|interest|nsf|overdraft|service charge/i, 'Bank Fees & Interest'], [/shell|esso|petro|husky|fas gas|co-op gas|chevron|mobil|gas bar|ufa cardlock|cardlock/i, 'Fuel'], [/costco|superstore|sobeys|safeway|save on|no frills|walmart|iga|freson|grocery/i, 'Groceries'], [/tim hortons|mcdonald|a&w|subway|pizza|restaurant|cafe|coffee|starbucks|dairy queen|wendy|burger|sushi|grill|pub|bar /i, 'Dining & Takeout'], [/home depot|lowes|rona|home hardware|canadian tire|peavey|princess auto/i, 'Home & Hardware'], [/shoppers|pharmacy|rexall|pharmasave|clinic|dental|physio/i, 'Health & Pharmacy'], [/scholastic|curriculum|homeschool|home school|teachers pay|outschool|abeka|math-u-see|singapore math|bookstore|chapters|indigo/i, 'Homeschooling'], [/amazon|amzn|ebay|aliexpress|temu|shein/i, 'Other']];
-  function guessCat(desc) {
-    for (let i = 0; i < CAT_GUESS.length; i++) if (CAT_GUESS[i][0].test(desc)) { const c = CAT_GUESS[i][1]; if (state.summary.categories.indexOf(c) >= 0) return c; }
+  const CAT_GUESS_BIZ = [[/home depot|lowes|rona|home hardware|gregg|eecol|nedco|guillevin|westburne|wesco|graybar|electrical supply|canadian tire|princess auto|peavey|ufa/i, 'Materials & Supplies'], [/shell|esso|petro|husky|fas gas|co-op gas|chevron|mobil|gas bar|cardlock/i, 'Fuel'], [/telus|rogers|bell|shaw|koodo|starlink|internet|mobility|wireless/i, 'Phone & Internet'], [/insur|intact|wawanesa|co-operators|wcb/i, 'Insurance'], [/tim hortons|mcdonald|a&w|subway|pizza|restaurant|cafe|coffee|starbucks|burger/i, 'Meals & Entertainment'], [/fee|interest|nsf|overdraft|service charge/i, 'Bank Fees & Interest'], [/staples|office|google|microsoft|adobe|quickbooks|intuit|shopify|squarespace|wix|godaddy/i, 'Office & Admin'], [/feed|mineral|vet|animal health|livestock|auction|butcher|abattoir|processing|freezer/i, 'Feed & Minerals']];
+  function guessCat(desc, cats) {
+    cats = cats || catsFor('H');
+    const table = cats.indexOf('Groceries') >= 0 ? CAT_GUESS : CAT_GUESS_BIZ.concat(CAT_GUESS);
+    for (let i = 0; i < table.length; i++) if (table[i][0].test(desc)) { const c = table[i][1]; if (cats.indexOf(c) >= 0) return c; }
     return 'Other';
   }
 
   function bankCardHtml(s) {
     const b = s.bank || { accounts: [], rows: 0 };
+    const book = entByCode(state.entity);
+    const accounts = (b.accounts || []).filter(function (a) { return (a.e || 'H') === state.entity; });
     let h = '';
-    if (!b.rows) h += '<p class="small muted" style="margin:4px 0 10px">Upload your bank or card statement and the app will check every charge against your receipts, so nothing slips through. CSV export from online banking works best; a PDF statement or screenshots of the banking app work too.</p>';
+    if (!accounts.length) h += '<p class="small muted" style="margin:4px 0 10px">Upload ' + (state.entity === 'H' ? 'your bank or card statement' : 'the ' + esc(book.key) + ' card or account statement') + ' and the app will check every charge against ' + (state.entity === 'H' ? 'your' : 'its') + ' receipts, so nothing slips through. CSV export from online banking works best; a PDF statement or screenshots of the banking app work too.</p>';
     else {
-      h += '<div class="stack" style="margin-top:4px;gap:4px">' + b.accounts.map(function (a) {
+      h += '<div class="stack" style="margin-top:4px;gap:4px">' + accounts.map(function (a) {
         const age = a.to ? Math.round((ymdDate(todayYmd()) - ymdDate(a.to)) / 86400000) : null;
         return '<div class="row small"><span><b>' + esc(a.name) + '</b> <span class="muted">· ' + esc(a.from) + ' → ' + esc(a.to) + '</span></span><span class="' + (a.noReceipt ? 'warnc' : 'good') + '">' + a.matched + ' of ' + (a.matched + a.noReceipt) + ' have receipts</span></div>' +
           (age !== null && age > 35 ? '<div class="tiny warnc">Last statement is ' + age + ' days old — upload a newer one</div>' : '');
       }).join('') + '</div>';
     }
+    h += '<label class="f">Statement for</label><div class="chips books" id="bankBooks">' + entities().map(function (e) { return '<button type="button" class="chip' + (e.code === (state.bank.entity || state.entity) ? ' on' : '') + '" data-code="' + e.code + '">' + e.icon + ' ' + esc(e.label) + '</button>'; }).join('') + '</div>';
     h += '<label class="f" for="bankAcct">Account name for this upload (optional — the file usually says)</label><input class="f" id="bankAcct" value="' + esc(state.cfg.bankAccount || '') + '" placeholder="e.g. CIBC Visa, Joint chequing">';
     h += '<div class="stack"><button class="btn tint" data-act="bank-upload"' + (state.bank.uploading ? ' disabled' : '') + '>' + (state.bank.uploading ? '<span class="spin"></span>Reading…' : '⬆️ Upload statement (CSV, PDF or screenshot)') + '</button></div>';
     if (state.bank.status) h += '<p class="small muted" style="margin:10px 0 0">' + esc(state.bank.status) + '</p>';
@@ -1896,7 +2107,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const keys = [];
     for (let i = n - 1; i >= 0; i--) keys.push(shiftKey(end, tmode, -i));
     const totals = {};
-    s.receipts.forEach(function (r) { const k = keyFor(r.d, tmode); totals[k] = (totals[k] || 0) + r.t; });
+    s.receipts.forEach(function (r) { if (!inE(r)) return; const k = keyFor(r.d, tmode); totals[k] = (totals[k] || 0) + r.t; });
     const vals = keys.map(function (k) { return r2(totals[k] || 0); });
     const max = Math.max.apply(null, vals.concat([1]));
     const W = 600, H = 150, padL = 6, padR = 6, padT = 22, padB = 24;
@@ -1933,7 +2144,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   function openDrill(kind, key) {
     const s = state.summary; if (!s) return;
     const mode = state.mode, pk = state.key;
-    const inP = function (r) { return inKey(r.d, pk, mode); };
+    const inP = function (r) { return inE(r) && inKey(r.d, pk, mode); };
     let html = '';
     if (kind === 'cat') {
       const ci = s.categories.indexOf(key);
@@ -1961,8 +2172,9 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
         use.forEach(function (it) { claimed.push(it); claimTotal += it[3]; });
       });
       claimTotal = r2(claimTotal);
-      html += '<div class="card"><div class="muted small">' + esc(labelFor(pk, mode)) + ' · tagged ' + esc(key) + '</div><div class="bigtotal">' + money(claimTotal) + '</div><div class="small muted">' + claimed.length + (claimed.length === 1 ? ' line' : ' lines') + ' to claim, before tax · ' + agg.count + (agg.count === 1 ? ' receipt' : ' receipts') + ' totalling ' + money(agg.total) + '</div>' +
-        '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' + (info && info.folder ? '<a class="btn small tint" href="' + esc(info.folder) + '" target="_blank" rel="noopener">📁 Open the ' + esc(key) + ' folder in Drive</a>' : '') + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') + '</div>' +
+      const tfolder = tagFolderFor(info);
+      html += '<div class="card"><div class="muted small">' + esc(labelFor(pk, mode)) + ' · tagged ' + esc(key) + (state.entity !== 'H' ? ' · ' + entLabel(state.entity) : '') + '</div><div class="bigtotal">' + money(claimTotal) + '</div><div class="small muted">' + claimed.length + (claimed.length === 1 ? ' line' : ' lines') + ' to claim, before tax · ' + agg.count + (agg.count === 1 ? ' receipt' : ' receipts') + ' totalling ' + money(agg.total) + '</div>' +
+        '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' + (tfolder ? '<a class="btn small tint" href="' + esc(tfolder) + '" target="_blank" rel="noopener">📁 Open the ' + esc(key) + ' folder in Drive</a>' : '') + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') + '</div>' +
         '<div class="tiny muted" style="margin-top:8px">For a claim: the Drive folder has the receipt photos; the sheet\'s Items tab filtered on Tag = ' + esc(key) + ' is the itemized list.' + (unmarked ? ' ' + unmarked + (unmarked === 1 ? ' receipt has' : ' receipts have') + ' no lines marked yet, so all its lines are counted — tap it and Change tag to pick.' : '') + '</div></div>';
       if (info && info.notes) html += '<h2>Claim rules</h2><div class="card small">' + esc(info.notes).replace(/\. /g, '.<br>') + '</div>';
       if (info && (info.counts || info.notCounts)) html += '<h2>What the reader looks for</h2><div class="card small">' + (info.counts ? '<b class="good">Counts:</b> ' + esc(info.counts) : '') + (info.notCounts ? '<div style="margin-top:8px"><b class="bad">Does not count:</b> ' + esc(info.notCounts) + '</div>' : '') + '<div class="tiny muted" style="margin-top:8px">Edit these in the sheet\'s Tags tab; the reader uses them on every receipt.</div></div>';
@@ -1992,7 +2204,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   function openReceipt(idx) {
     const s = state.summary; const r = s.receipts[idx]; if (!r) return;
     const items = s._itemsByR[idx] || [];
-    let html = '<div class="card"><div class="row"><div><b>' + esc(r.s) + '</b>' + (r.tg ? '<span class="badge blue">🏷️ ' + esc(r.tg) + '</span>' : (r.th ? '<span class="badge hint">🏷️ ' + esc(r.th) + '?</span>' : '')) + '<div class="muted small">' + esc(r.d) + ' · ' + esc(s.whos[r.w] || '') + (r.pay ? ' · ' + esc(r.pay) : '') + '</div></div><div class="bigtotal" style="font-size:28px">' + money(r.t) + '</div></div>';
+    let html = '<div class="card"><div class="row"><div><b>' + esc(r.s) + '</b>' + (r.e ? '<span class="badge book">' + entLabel(r.e) + '</span>' : '') + (r.tg ? '<span class="badge blue">🏷️ ' + esc(r.tg) + '</span>' : (r.th ? '<span class="badge hint">🏷️ ' + esc(r.th) + '?</span>' : '')) + '<div class="muted small">' + esc(r.d) + ' · ' + esc(s.whos[r.w] || '') + (r.pay ? ' · ' + esc(r.pay) + (r.cd ? ' ****' + esc(r.cd) : '') : '') + '</div></div><div class="bigtotal" style="font-size:28px">' + money(r.t) + '</div></div>';
     if (items.length) {
       html += '<div class="lines">' + items.map(function (it) { const mark = it[5] ? '<span class="th">🏷️</span>' : (r.th && it[6] === r.th ? '<span class="th">🏷️?</span>' : ''); return '<div><span>' + esc((it[2] && it[2] !== 1 ? it[2] + ' × ' : '') + it[1]) + '<span class="cat">' + esc(s.categories[it[4]] || '') + '</span>' + mark + '</span><span>' + money(it[3]) + '</span></div>'; }).join('') + '</div>';
     } else html += '<div class="muted small" style="margin-top:8px">' + (r.src === 'bank' ? 'Filed from the bank statement (no receipt).' : 'Line items are kept for the last 15 months.') + '</div>';
@@ -2001,7 +2213,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     if (r.ask && r.ask.length) html += '<div class="notice" style="margin-bottom:0">⚠️ ' + esc(r.rn || '') + '</div>' + fixPanelHtml(r.id, fixInfo(r.id), false);
     else if (state.fixOpen[r.id]) html += fixPanelHtml(r.id, fixInfo(r.id), true);
     if (r.bm) html += '<div class="small good" style="margin-top:8px">✓ Matched to a bank charge</div>';
-    html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + (r.src !== 'bank' ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.id) + '" data-cur="' + esc(r.tg || '') + '">🏷️ ' + (r.tg ? 'Change tag' : 'Tag') + '</button>' : '') + (r.src !== 'bank' && !(r.ask && r.ask.length) ? '<button class="btn small" data-act="fix-open" data-rid="' + esc(r.id) + '">Tip / tax</button>' : '') + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') +
+    html += '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + (r.src !== 'bank' ? '<button class="btn small" data-act="tag" data-rid="' + esc(r.id) + '" data-cur="' + esc(r.tg || '') + '">🏷️ ' + (r.tg ? 'Change tag' : 'Tag') + '</button>' : '') + (r.src !== 'bank' ? '<button class="btn small" data-act="move" data-rid="' + esc(r.id) + '">' + (r.e ? entByCode(r.e).icon : '📒') + ' Move…</button>' : '') + (r.src !== 'bank' && !(r.ask && r.ask.length) ? '<button class="btn small" data-act="fix-open" data-rid="' + esc(r.id) + '">Tip / tax</button>' : '') + photoLink(r) + (s.sheetUrl ? '<a class="btn small" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">Open sheet</a>' : '') +
       '<button class="btn small danger" data-act="rm" data-rid="' + esc(r.id) + '" style="margin-left:auto">Remove</button></div></div>';
     openSheet(r.s, html);
   }
@@ -2013,6 +2225,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const t = todayYmd(), curM = t.slice(0, 7);
     const byMonth = {};
     s.receipts.forEach(function (r) {
+      if (!inE(r)) return;
       const k = r.d.slice(0, 7);
       if (!byMonth[k]) byMonth[k] = {};
       Object.keys(r.c).forEach(function (ci) { const n = s.categories[ci] || 'Other'; byMonth[k][n] = (byMonth[k][n] || 0) + r.c[ci]; });
@@ -2041,16 +2254,18 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   function renderBudget() {
     const s = state.summary;
     const body = $('budgetBody');
+    renderBookSeg('budgetSeg');
     if (!s) {
       body.innerHTML = '<div class="empty">' + (C.configReady(state.cfg) ? (navigator.onLine ? '<span class="spin"></span>Loading…' : 'No signal and nothing cached yet.') : 'Connect the app in More first.') + '</div>';
       return;
     }
     const t = todayYmd(), curM = t.slice(0, 7);
     const dk = daysInKey(curM, 'month');
-    const cur = aggregate(s, function (r) { return r.d.slice(0, 7) === curM; });
+    const cur = aggregate(s, function (r) { return inE(r) && r.d.slice(0, 7) === curM; });
     const spent = {}; cur.byCategory.forEach(function (c) { spent[c.name] = c.total; });
-    const budgets = s.budgets || {};
+    const budgets = budgetsFor(s, state.entity);
     const proposal = proposeBudget(s);
+    const book = entByCode(state.entity);
     const edit = state.budget.edit;
     const hasBudget = Object.keys(budgets).some(function (k) { return Number(budgets[k]) > 0; });
     const pctMonth = dk.elapsed / dk.total;
@@ -2058,7 +2273,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
 
     // ---- Month header ----
     const bt = Object.keys(budgets).reduce(function (a, k) { return a + (Number(budgets[k]) || 0); }, 0);
-    html += '<div class="card"><div class="row"><div class="muted small">' + esc(labelFor(curM, 'month')) + ' · day ' + dk.elapsed + ' of ' + dk.total + '</div>' +
+    html += '<div class="card"><div class="row"><div class="muted small">' + esc((state.entity !== 'H' ? book.icon + ' ' + book.key + ' · ' : '') + labelFor(curM, 'month')) + ' · day ' + dk.elapsed + ' of ' + dk.total + '</div>' +
       (hasBudget && !edit ? '<button class="btn quiet small" data-act="budget-edit">Edit budget</button>' : '') + '</div>';
     if (hasBudget) {
       const left = r2(bt - cur.total);
@@ -2068,14 +2283,14 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
         '<div class="trk" style="margin-top:10px"><div class="fil ' + fillClass(cur.total, bt, pctMonth) + '" style="width:' + Math.min(100, Math.round(cur.total / Math.max(bt, 1) * 100)) + '%"></div><div class="mark" style="left:' + Math.round(pctMonth * 100) + '%"></div></div>' +
         '<div class="row small" style="margin-top:6px"><span class="muted">On pace for ' + money0(pace) + (pace > bt ? ' <span class="bad">(' + money0(pace - bt) + ' over)</span>' : ' <span class="good">(' + money0(bt - pace) + ' under)</span>') + '</span><span class="muted">▏= today</span></div>';
     } else if (!edit) {
-      html += '<div class="bigtotal">' + money(cur.total) + '</div><div class="small muted">spent so far this month · no budget set yet</div>';
+      html += '<div class="bigtotal">' + money(cur.total) + '</div><div class="small muted">spent so far this month' + (state.entity !== 'H' ? ' under ' + esc(book.label) : '') + ' · no budget set yet</div>';
       if (proposal) html += '<p class="small" style="margin:10px 0 0">Based on ' + esc(proposal.basis) + ', here is a starting budget. Change any number, then save.</p><div class="stack"><button class="btn tint" data-act="budget-edit">Set up my budget</button></div>';
       else html += '<p class="small muted" style="margin:10px 0 0">Snap receipts for a little while and the app will propose a budget from your real spending — or set numbers now.</p><div class="stack"><button class="btn tint" data-act="budget-edit">Set numbers now</button></div>';
     }
     html += '</div>';
 
     // ---- Category rows ----
-    const cats = s.categories.slice();
+    const cats = catsFor(state.entity).slice();
     Object.keys(budgets).concat(Object.keys(spent)).forEach(function (c) { if (cats.indexOf(c) < 0) cats.push(c); });
     const rows = cats.map(function (c) { return { c: c, b: Number(budgets[c]) || 0, sp: spent[c] || 0, p: proposal ? (proposal.budgets[c] || 0) : 0 }; });
     if (edit) {
@@ -2125,7 +2340,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   function budgetHistoryHtml(s, bt) {
     const curM = todayYmd().slice(0, 7);
     const keys = []; for (let i = 1; i <= 6; i++) keys.push(shiftKey(curM, 'month', -i));
-    const totals = {}; s.receipts.forEach(function (r) { const k = r.d.slice(0, 7); totals[k] = (totals[k] || 0) + r.t; });
+    const totals = {}; s.receipts.forEach(function (r) { if (!inE(r)) return; const k = r.d.slice(0, 7); totals[k] = (totals[k] || 0) + r.t; });
     const rows = keys.filter(function (k) { return totals[k]; });
     if (!rows.length) return '<div class="empty" style="padding:10px">No earlier months yet</div>';
     return rows.map(function (k) {
@@ -2138,7 +2353,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const s = state.summary; if (!s) return;
     state.budget.edit = true;
     state.budget.values = {};
-    const b = s.budgets || {};
+    const b = budgetsFor(s, state.entity);
     Object.keys(b).forEach(function (c) { if (Number(b[c]) > 0) state.budget.values[c] = b[c]; });
     if (!Object.keys(state.budget.values).length) {
       const p = proposeBudget(s);
@@ -2156,9 +2371,10 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
     const vals = {};
     $('budgetBody').querySelectorAll('input[data-cat]').forEach(function (inp) { vals[inp.dataset.cat] = inp.value === '' ? '' : Number(inp.value); });
     const p = proposeBudget(state.summary);
-    const res = await postAction({ action: 'budget', budgets: vals, proposed: p ? p.budgets : {} });
+    const res = await postAction({ action: 'budget', entity: entByCode(state.entity).key, budgets: vals, proposed: p ? p.budgets : {} });
     if (!res) return;
-    state.summary.budgets = res.budgets || {};
+    if (!state.summary.budgets || typeof state.summary.budgets !== 'object' || !('H' in state.summary.budgets)) state.summary.budgets = { H: {}, P: {}, C: {} };
+    state.summary.budgets[state.entity] = res.budgets || {};
     state.budget.edit = false;
     await C.kvSet('summary', { at: state.summaryAt, data: state.summary });
     toast('Budget saved ✓');
@@ -2349,7 +2565,7 @@ nav.tabs button .dot{position:absolute;top:8px;left:calc(50% + 8px);background:v
   }
 
   // expose a little for tests
-  window.__receipts = { state: state, refreshRecords: refreshRecords, runSync: runSync, renderSpend: renderSpend, renderBudget: renderBudget, prepareImage: prepareImage, sliceTall: sliceTall, prepareParts: prepareParts, drainInbox: drainInbox, keyFor: keyFor, shiftKey: shiftKey, daysInKey: daysInKey, aggregate: aggregate, proposeBudget: proposeBudget, showView: showView, selectPeriod: selectPeriod, maybeRefreshSummary: maybeRefreshSummary, openDrill: openDrill, startCamera: startCamera, capture: capture, setZoom: setZoom, setupZoom: setupZoom, openTagPicker: openTagPicker, tagList: tagList, openTagItems: openTagItems, recordHint: recordHint, attention: attention, fixInfo: fixInfo };
+  window.__receipts = { state: state, refreshRecords: refreshRecords, runSync: runSync, renderSpend: renderSpend, renderBudget: renderBudget, prepareImage: prepareImage, sliceTall: sliceTall, prepareParts: prepareParts, drainInbox: drainInbox, keyFor: keyFor, shiftKey: shiftKey, daysInKey: daysInKey, aggregate: aggregate, proposeBudget: proposeBudget, showView: showView, selectPeriod: selectPeriod, maybeRefreshSummary: maybeRefreshSummary, openDrill: openDrill, startCamera: startCamera, capture: capture, setZoom: setZoom, setupZoom: setupZoom, openTagPicker: openTagPicker, tagList: tagList, openTagItems: openTagItems, recordHint: recordHint, attention: attention, fixInfo: fixInfo, setEntity: setEntity, entities: entities, openMovePicker: openMovePicker, openBookPicker: openBookPicker };
 })();
 </script>
 </body>
