@@ -1,5 +1,5 @@
 /**
- * Household Receipts — Apps Script backend  (v1.2)
+ * Household Receipts — Apps Script backend  (v2.0)
  * ---------------------------------------------------------------
  * The phone app posts receipts here (photos, long screenshots cut into slices,
  * or PDF receipts). This script:
@@ -38,6 +38,27 @@ const CONFIG = {
   CURRENCY: 'CAD',
   GST_RATE: 0.05,                       // Alberta: GST only. Used when the shopper says "tax was added on top" / "included"
   TIP_PRESETS: [15, 18, 20],            // the quick-tap tip percentages the app offers
+  // The "books" a receipt can belong to. A receipt lands in a book by the card that paid (Cards tab),
+  // or by the shopper's choice on the camera. Business books get their own Drive folder, category list,
+  // budgets and bank statements; the household stays as it was.
+  ENTITIES: [
+    { key: 'Household', code: 'H', label: 'Home', icon: '🏠', folder: '' },
+    { key: 'PRO Electrical', code: 'P', label: 'PRO', icon: '⚡', folder: 'PRO Electrical receipts' },
+    { key: 'PCW', code: 'C', label: 'PCW', icon: '🐄', folder: 'Peace Country Wagyu receipts' }
+  ],
+  // Category lists for the business books (the Household list is CATEGORIES). All editable in the Categories tab.
+  BUSINESS_CATEGORIES: {
+    'PRO Electrical': [
+      'Materials & Supplies', 'Tools & Equipment', 'Fuel', 'Vehicle & Repairs', 'Meals & Entertainment',
+      'Office & Admin', 'Phone & Internet', 'Subcontractors', 'Permits & Fees', 'Safety & PPE',
+      'Training & Certification', 'Advertising & Marketing', 'Insurance', 'Bank Fees & Interest', 'Other'
+    ],
+    'PCW': [
+      'Feed & Minerals', 'Vet & Animal Health', 'Livestock', 'Processing & Butchering', 'Packaging & Labels',
+      'Freezers & Equipment', 'Fencing & Farm Supplies', 'Fuel', 'Vehicle & Repairs', 'Markets & Marketing',
+      'Delivery & Shipping', 'Website & Software', 'Office & Admin', 'Meals & Entertainment', 'Insurance', 'Other'
+    ]
+  },
   CATEGORIES: [
     'Groceries', 'Dining & Takeout', 'Fuel', 'Vehicle', 'Household Supplies',
     'Home & Hardware', 'Clothing', 'Health & Pharmacy', 'Personal Care',
@@ -93,25 +114,27 @@ const CONFIG = {
     BUDGETS: 'Budgets',
     CATEGORIES: 'Categories',
     TAGS: 'Tags',
+    CARDS: 'Cards',
     LOG: 'Log'
   },
   RECEIPT_HEADERS: [
     'Receipt ID', 'Date', 'Time', 'Store', 'Store Type', 'Item Count', 'Subtotal',
     'GST/HST', 'Other Tax', 'Tip', 'Total', 'Payment', 'Who', 'Status',
     'Needs Review', 'Review Notes', 'Photo', 'Hash', 'Captured At', 'Filed At',
-    'Photo File ID', 'Confidence', 'Source', 'Pages', 'Duplicate Of', 'Bank Txn', 'Match Note', 'Tag', 'Tag Hint', 'Asks'
+    'Photo File ID', 'Confidence', 'Source', 'Pages', 'Duplicate Of', 'Bank Txn', 'Match Note', 'Tag', 'Tag Hint', 'Asks', 'Entity', 'Card'
   ],
   ITEM_HEADERS: [
     'Receipt ID', 'Date', 'Store', 'Item', 'Qty', 'Unit Price', 'Line Total',
-    'Category', 'Who', 'Notes', 'Tag', 'Tag Hint'
+    'Category', 'Who', 'Notes', 'Tag', 'Tag Hint', 'Entity'
   ],
+  CARD_HEADERS: ['Last 4', 'Card', 'Entity', 'Holder', 'Added'],
   TAG_HEADERS: ['Tag', 'Category', 'Notes', 'What counts', 'What does not count'],
   BANK_HEADERS: [
     'Txn ID', 'Date', 'Description', 'Amount', 'Direction', 'Account', 'Source File',
-    'Status', 'Receipt ID', 'Note', 'Uploaded At'
+    'Status', 'Receipt ID', 'Note', 'Uploaded At', 'Entity'
   ],
-  RULE_HEADERS: ['Pattern', 'Action', 'Category', 'Added'],
-  BUDGET_HEADERS: ['Category', 'Monthly Budget', 'Proposed', 'Updated'],
+  RULE_HEADERS: ['Pattern', 'Action', 'Category', 'Added', 'Entity'],
+  BUDGET_HEADERS: ['Category', 'Monthly Budget', 'Proposed', 'Updated', 'Entity'],
   MATCH_WINDOW_BEFORE: 1,   // a bank charge may be dated up to 1 day before the receipt (time zones)
   MATCH_WINDOW_AFTER: 6,    // ...or post up to 6 days after the purchase
   ITEMS_MONTHS: 15,         // how many months of line items the dashboard feed carries
@@ -124,17 +147,18 @@ const RC = {
   GST: 8, OTHER_TAX: 9, TIP: 10, TOTAL: 11, PAYMENT: 12, WHO: 13, STATUS: 14,
   NEEDS_REVIEW: 15, REVIEW_NOTES: 16, PHOTO: 17, HASH: 18, CAPTURED_AT: 19,
   FILED_AT: 20, FILE_ID: 21, CONFIDENCE: 22, SOURCE: 23, PAGES: 24, DUP_OF: 25,
-  BANK_TXN: 26, MATCH_NOTE: 27, TAG: 28, TAG_HINT: 29, ASKS: 30
+  BANK_TXN: 26, MATCH_NOTE: 27, TAG: 28, TAG_HINT: 29, ASKS: 30, ENTITY: 31, CARD: 32
 };
 // Questions the reader could not settle and the app asks the shopper (comma-separated in the Asks column)
 const ASK_NOTES = {
   tip: 'Tip not shown — was one added?',
-  tax: 'Not sure whether GST is included in the total'
+  tax: 'Not sure whether GST is included in the total',
+  card: 'New card'          // the full note reads "New card ****4411 — home, PRO or PCW?"
 };
 // Items tab columns
-const IC = { ID: 1, DATE: 2, STORE: 3, ITEM: 4, QTY: 5, UNIT: 6, LINE: 7, CATEGORY: 8, WHO: 9, NOTES: 10, TAG: 11, TAG_HINT: 12 };
+const IC = { ID: 1, DATE: 2, STORE: 3, ITEM: 4, QTY: 5, UNIT: 6, LINE: 7, CATEGORY: 8, WHO: 9, NOTES: 10, TAG: 11, TAG_HINT: 12, ENTITY: 13 };
 // Bank tab columns
-const BC = { ID: 1, DATE: 2, DESC: 3, AMOUNT: 4, DIR: 5, ACCOUNT: 6, SOURCE: 7, STATUS: 8, RECEIPT: 9, NOTE: 10, UPLOADED: 11 };
+const BC = { ID: 1, DATE: 2, DESC: 3, AMOUNT: 4, DIR: 5, ACCOUNT: 6, SOURCE: 7, STATUS: 8, RECEIPT: 9, NOTE: 10, UPLOADED: 11, ENTITY: 12 };
 
 /* ===================================================================
  *  SETUP + MAINTENANCE (run from the editor)
@@ -255,6 +279,8 @@ function doPost(e) {
     if (action === 'tag_create') return json_(handleTagCreate_(payload));
     if (action === 'delete') return json_(handleDelete_(payload));
     if (action === 'fix') return json_(handleFix_(payload));
+    if (action === 'card_set') return json_(handleCardSet_(payload));
+    if (action === 'entity_set') return json_(handleEntitySet_(payload));
     return json_({ ok: false, error: 'unknown_action' });
   } catch (err) {
     log_('error', 'doPost ' + (payload.action || '') + ': ' + err + (err.stack ? '\n' + err.stack : ''));
@@ -267,7 +293,7 @@ function ping_() {
   const ss = getSpreadsheet_();
   return {
     ok: true,
-    version: '1.2',
+    version: '2.0',
     sheetUrl: ss.getUrl(),
     model: getModel_(),
     claudeKey: !!props.getProperty('ANTHROPIC_API_KEY'),
@@ -299,6 +325,7 @@ function handleReceipt_(payload) {
   const capturedAt = parseIso_(payload.capturedAt) || new Date();
   const kind = cleanKind_(payload.kind, payload.mime);
   const tag = cleanTag_(payload.tag);
+  const chosenEntity = cleanEntity_(payload.entity);      // '' = decide by the card
   const pages = Array.isArray(payload.pages) ? payload.pages.filter(function (p) { return p && String(p).length > 100; }) : [];
 
   // ---- Phase 1 (under lock): dedupe + reserve a row ----------------------
@@ -332,6 +359,7 @@ function handleReceipt_(payload) {
       row[RC.SOURCE - 1] = kind;
       row[RC.PAGES - 1] = pages.length || 1;
       row[RC.TAG - 1] = tag;
+      row[RC.ENTITY - 1] = chosenEntity;
       sh.appendRow(row);
       existing = readReceiptRow_(sh, sh.getLastRow());
     }
@@ -392,7 +420,7 @@ function processExisting_(ss, sh, existing, pagesB64) {
 
   let parsed;
   try {
-    parsed = extractReceipt_(blocks, kind, capturedAt, blocks.length > 1 ? Math.ceil(blocks.length / 2) : 1, existing.tag);
+    parsed = extractReceipt_(blocks, kind, capturedAt, blocks.length > 1 ? Math.ceil(blocks.length / 2) : 1, existing.tag, existing.entity);
   } catch (err) {
     log_('error', 'extract ' + existing.id + ': ' + err);
     sh.getRange(existing.row, RC.STATUS).setValue('error');
@@ -413,7 +441,7 @@ function processExisting_(ss, sh, existing, pagesB64) {
     return { ok: true, status: 'not_a_receipt', receiptId: existing.id, message: 'That did not look like a receipt.', duplicate: false };
   }
 
-  const rec = normalizeReceipt_(parsed, capturedAt);
+  const rec = normalizeReceipt_(parsed, capturedAt, existing.entity);
   rec.id = existing.id;
   rec.who = existing.who;
   rec.hash = existing.hash;
@@ -448,7 +476,9 @@ function processExisting_(ss, sh, existing, pagesB64) {
     const prefix = dup && dup.strong ? 'DUPLICATE ' : '';
     file.setName(safeName_(prefix + rec.date + ' ' + rec.store + ' $' + rec.total.toFixed(2) + ' (' + rec.id + ')' + extFor_(mime)));
   } catch (e) { /* cosmetic */ }
-  if (rec.tag && !(dup && dup.strong)) { try { fileTagShortcut_(rec.tag, file); } catch (e) { log_('warn', 'tag folder ' + rec.id + ': ' + e); } }
+  // Business receipts live in their own Drive folder
+  if (rec.entity && rec.entity !== 'Household') { try { file.moveTo(entityFolder_(rec.entity)); } catch (e) { log_('warn', 'move to ' + rec.entity + ' folder ' + rec.id + ': ' + e); } }
+  if (rec.tag && !(dup && dup.strong)) { try { fileTagShortcut_(rec.tag, file, rec.entity); } catch (e) { log_('warn', 'tag folder ' + rec.id + ': ' + e); } }
 
   // Line it up with the bank (only receipts that count); a match can settle the tip and the total
   if (!(dup && dup.strong)) {
@@ -503,6 +533,8 @@ function receiptResponse_(ss, existing, duplicate) {
       tag: existing.tag,
       tagHint: tagHintOf_(existing),
       asks: existing.asks || [],
+      entity: existing.entity || 'Household',
+      card: existing.card || '',
       items: items
     }
   };
@@ -563,6 +595,8 @@ function publicReceipt_(rec) {
     tag: rec.tag || '',
     tagHint: tagHintOf_(rec),
     asks: rec.asks || [],
+    entity: rec.entity || 'Household',
+    card: rec.card || '',
     items: rec.items.map(function (it) {
       return { name: it.name, qty: it.qty, unitPrice: it.unitPrice, lineTotal: it.lineTotal, category: it.category, tag: it.tag || '', tagHint: it.tagHint || '' };
     })
@@ -744,7 +778,7 @@ function handleDelete_(payload) {
   if (ex.fileId) {
     try {
       const file = DriveApp.getFileById(ex.fileId);
-      if (ex.tag) removeTagShortcut_(ex.tag, file);
+      if (ex.tag) removeTagShortcut_(ex.tag, file, ex.entity);
       file.setTrashed(true);
     } catch (e) { log_('warn', 'delete photo ' + id + ': ' + e); }
   }
@@ -852,11 +886,15 @@ function handleFix_(payload) {
  *  CLAUDE EXTRACTION
  * =================================================================== */
 
-function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
+function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag, forcedEntity) {
   const today = Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd');
   const captured = Utilities.formatDate(capturedAt, CONFIG.TZ, 'yyyy-MM-dd HH:mm');
-  const cats = getCategories_();
-  const tags = readTags_(getSpreadsheet_());
+  const ss = getSpreadsheet_();
+  const cards = readCards_(ss);
+  const catsBy = {};
+  CONFIG.ENTITIES.forEach(function (e) { catsBy[e.key] = getCategories_(e.key); });
+  const cats = forcedEntity && catsBy[forcedEntity] ? catsBy[forcedEntity] : getAllCategories_();
+  const tags = readTags_(ss);
   const tagNames = tags.map(function (t) { return t.tag; });
   const tagCat = tag ? tagCategory_(tag) : '';
 
@@ -872,7 +910,7 @@ function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
     '  "date": "YYYY-MM-DD" or null,',
     '  "time": "HH:MM" (24h) or null,',
     '  "currency": "CAD" unless the receipt clearly shows another currency,',
-    '  "items": [ { "name": "plain-English item name", "qty": number, "unit_price": number or null, "line_total": number, "category": one of ' + JSON.stringify(cats) + (tagNames.length ? ', "tag": one of ' + JSON.stringify(tagNames) + ' or null' : '') + ' } ],',
+    '  "items": [ { "name": "plain-English item name", "qty": number, "unit_price": number or null, "line_total": number, "category": one of the categories for the receipt\'s book (see BOOKS below)' + (tagNames.length ? ', "tag": one of ' + JSON.stringify(tagNames) + ' or null' : '') + ' } ],',
     '  "subtotal": number or null,',
     '  "gst": number or null,',
     '  "other_tax": number or null,',
@@ -881,6 +919,8 @@ function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
     '  "tax_status": "included" when a GST/HST line is printed or the receipt says tax is included; "none" when the receipt clearly charges no tax (basic groceries only, a private sale, a tax-exempt lesson); "added" when the printed total is a pre-tax amount and GST is charged on top (an invoice or quote marked plus GST); "unsure" when no tax line is visible and you cannot tell (handwritten receipts, lesson or tutoring receipts, a simple card slip),',
     '  "total": number,',
     '  "payment": "Visa" | "Mastercard" | "Debit" | "Cash" | "Amex" | "Gift card" | "PayPal" | other | null,',
+    '  "card_last4": the last four digits of the card printed on the receipt (e.g. "4411" from "VISA ************4411" or "MC 4411"), or null,',
+    '  "book": one of ' + JSON.stringify(CONFIG.ENTITIES.map(function (e) { return e.key; })) + ' or null — see BOOKS,',
     '  "confidence": number between 0 and 1,',
     '  "notes": "one short line about anything you were unsure of, or empty"',
     '}',
@@ -912,6 +952,16 @@ function extractReceipt_(blocks, kind, capturedAt, sliceCount, tag) {
       instructions.push(bits.join('\n'));
     });
   }
+  // Which book: the card decides, unless the shopper chose on the camera
+  const bookLines = ['', 'BOOKS. The family keeps three sets of books. Each has its own category list; "category" must come from the list of the receipt\'s book.'];
+  CONFIG.ENTITIES.forEach(function (e) { bookLines.push('- ' + e.key + ': categories ' + JSON.stringify(catsBy[e.key])); });
+  if (forcedEntity) {
+    bookLines.push('This receipt belongs to "' + forcedEntity + '" (the shopper said so): set "book" to it and use its categories.');
+  } else {
+    if (cards.length) bookLines.push('Known cards (last four digits → book): ' + cards.map(function (c) { return c.last4 + ' → ' + c.entity + (c.card ? ' (' + c.card + ')' : ''); }).join('; ') + '.');
+    bookLines.push('Read the card digits on the receipt. If they match a known card, set "book" to that book and use its categories. If the card is not known, or the receipt shows no card (cash, no slip), set "book" to null and use the Household categories — never guess the book from what was bought.');
+  }
+  instructions.push.apply(instructions, bookLines);
   if (tag) {
     const hasGuide = guides.some(function (t) { return t.tag === tag; });
     instructions.push('', '- The shopper tagged this whole receipt "' + tag + '"' + (tagCat && cats.indexOf(tagCat) >= 0 ? ', so lean towards it: give "tag": "' + tag + '" and the category "' + tagCat + '"' : ', so lean towards it: give "tag": "' + tag + '"') +
@@ -991,9 +1041,14 @@ function parseJsonLoose_(text) {
  *  NORMALIZE + VALIDATE
  * =================================================================== */
 
-function normalizeReceipt_(raw, capturedAt) {
+function normalizeReceipt_(raw, capturedAt, forcedEntity) {
   const notes = [];
-  const cats = getCategories_();
+  // Which book: the shopper's choice, else the card that paid (Cards tab), else Household with a question
+  const last4 = String(raw.card_last4 || '').replace(/\D/g, '').slice(-4);
+  const cardEntity = last4.length === 4 ? cardEntity_(last4) : '';
+  const entity = cleanEntity_(forcedEntity) || cardEntity || 'Household';
+  const askCard = !cleanEntity_(forcedEntity) && last4.length === 4 && !cardEntity;
+  const cats = getCategories_(entity);
   const catSet = {};
   cats.forEach(function (c) { catSet[c.toLowerCase()] = c; });
   const tagSet = {};
@@ -1059,7 +1114,8 @@ function normalizeReceipt_(raw, capturedAt) {
   if (raw.tip_possible === true && !(tip > 0)) asks.push('tip');
   const taxStatus = String(raw.tax_status || '').toLowerCase();
   if ((taxStatus === 'unsure' || taxStatus === 'added') && !(gst > 0)) asks.push('tax');
-  asks.forEach(function (k) { notes.push(ASK_NOTES[k]); });
+  if (askCard) asks.push('card');
+  asks.forEach(function (k) { notes.push(k === 'card' ? ASK_NOTES.card + ' ****' + last4 + ' — home, PRO or PCW?' : ASK_NOTES[k]); });
 
   const storeTypeRaw = String(raw.store_type || '').trim().toLowerCase();
   const storeType = CONFIG.STORE_TYPES.filter(function (s) { return s.toLowerCase() === storeTypeRaw; })[0] || 'Other';
@@ -1080,7 +1136,9 @@ function normalizeReceipt_(raw, capturedAt) {
     confidence: confidence,
     needsReview: notes.length > 0,
     reviewNotes: notes.join('; '),
-    asks: asks
+    asks: asks,
+    entity: entity,
+    card: last4
   };
 }
 
@@ -1096,6 +1154,7 @@ function handleBank_(payload) {
   const kind = String(payload.kind || '').toLowerCase();
   const name = String(payload.name || '').slice(0, 80) || ('upload ' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd HH:mm'));
   const accountLabel = String(payload.account || '').trim().slice(0, 40);
+  const entity = cleanEntity_(payload.entity) || 'Household';
   const ss = getSpreadsheet_();
   ensureTabs_(ss);
 
@@ -1124,9 +1183,10 @@ function handleBank_(payload) {
     return { ok: false, error: 'no_transactions', retryable: false, message: 'No transactions were found in that file.' + (parsed.note ? ' ' + parsed.note : '') };
   }
   const account = accountLabel || parsed.account || 'Bank';
-  const result = importTransactions_(ss, parsed.transactions, name, account);
+  const result = importTransactions_(ss, parsed.transactions, name, account, entity);
   result.ok = true;
   result.account = account;
+  result.entity = entity;
   result.note = parsed.note || '';
   return result;
 }
@@ -1247,7 +1307,8 @@ function extractBankTransactions_(blocks, kind, n) {
 }
 
 /** Writes new transactions to the Bank tab (skipping ones already there), applies rules, then matches receipts. */
-function importTransactions_(ss, txns, sourceName, account) {
+function importTransactions_(ss, txns, sourceName, account, entity) {
+  entity = cleanEntity_(entity) || 'Household';
   const bsh = ss.getSheetByName(CONFIG.TABS.BANK);
   const existing = {};
   const last = bsh.getLastRow();
@@ -1262,7 +1323,7 @@ function importTransactions_(ss, txns, sourceName, account) {
   const now = new Date();
 
   txns.forEach(function (t) {
-    const base = [account, t.date, t.desc.toUpperCase().replace(/\s+/g, ' ').trim(), t.amount.toFixed(2), t.dir].join('|');
+    const base = [account, t.date, t.desc.toUpperCase().replace(/\s+/g, ' ').trim(), t.amount.toFixed(2), t.dir].join('|');   // (the book is not part of the id: the same statement re-uploaded under another book is still the same statement)
     seen[base] = (seen[base] || 0) + 1;
     const id = 'T' + sha256Hex_(base + '|' + seen[base]).slice(0, 14);
     if (existing[id]) { out.already++; return; }
@@ -1270,11 +1331,11 @@ function importTransactions_(ss, txns, sourceName, account) {
     let status = 'no_receipt', note = '';
     if (t.dir === 'in') { status = 'credit'; out.credits++; }
     else {
-      const rule = matchRule_(rules, t.desc);
+      const rule = matchRule_(rules, t.desc, entity);
       if (rule && rule.action === 'ignore') { status = 'ignored'; note = 'rule'; out.ignored++; }
       else if (rule && rule.action === 'expense') { status = 'expense'; note = 'rule'; toExpense.push({ id: id, t: t, category: rule.category }); out.autoExpense++; }
     }
-    rows.push([id, dateFromYmd_(t.date), t.desc, t.amount, t.dir, account, sourceName, status, '', note, now]);
+    rows.push([id, dateFromYmd_(t.date), t.desc, t.amount, t.dir, account, sourceName, status, '', note, now, entity]);
     out.added++;
     if (!out.from || t.date < out.from) out.from = t.date;
     if (!out.to || t.date > out.to) out.to = t.date;
@@ -1286,7 +1347,7 @@ function importTransactions_(ss, txns, sourceName, account) {
     try {
       bsh.getRange(bsh.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
       toExpense.forEach(function (x) {
-        const rid = createBankExpense_(ss, x.t, account, x.category, x.id);
+        const rid = createBankExpense_(ss, x.t, account, x.category, x.id, entity);
         const row = findBankRow_(bsh, x.id);
         if (row) bsh.getRange(row, BC.RECEIPT).setValue(rid);
       });
@@ -1302,11 +1363,12 @@ function importTransactions_(ss, txns, sourceName, account) {
 }
 
 /** A bank charge filed as an expense without a receipt: one receipt row + one item line. */
-function createBankExpense_(ss, t, account, category, txnId) {
+function createBankExpense_(ss, t, account, category, txnId, entity) {
+  entity = cleanEntity_(entity) || 'Household';
   const sh = ss.getSheetByName(CONFIG.TABS.RECEIPTS);
   const id = 'B' + Utilities.formatDate(dateFromYmd_(t.date), CONFIG.TZ, 'yyyyMMdd') + '-' + txnId.slice(1, 6);
   const store = prettyDesc_(t.desc);
-  const cats = getCategories_();
+  const cats = getCategories_(entity);
   const cat = cats.indexOf(category) >= 0 ? category : 'Other';
   const rec = {
     id: id, date: t.date, time: '', store: store, storeType: 'Other',
@@ -1314,7 +1376,7 @@ function createBankExpense_(ss, t, account, category, txnId) {
     subtotal: t.amount, gst: null, otherTax: null, tip: null, total: t.amount,
     payment: account, who: 'Bank', needsReview: false, reviewNotes: '',
     photoUrl: '', hash: 'bank:' + txnId, capturedAt: new Date(), fileId: '', confidence: null,
-    source: 'bank', pages: 1, bankTxn: txnId, matchNote: 'from statement'
+    source: 'bank', pages: 1, bankTxn: txnId, matchNote: 'from statement', entity: entity, asks: []
   };
   sh.appendRow([id]);                      // reserve a real (non-empty) row, then fill it in
   writeReceipt_(ss, sh, sh.getLastRow(), rec, 'ok');
@@ -1355,6 +1417,7 @@ function handleBankAction_(payload) {
   const account = String(v[BC.ACCOUNT - 1] || 'Bank');
   const status = String(v[BC.STATUS - 1] || '');
   const linked = String(v[BC.RECEIPT - 1] || '');
+  const entity = cleanEntity_(v[BC.ENTITY - 1]) || 'Household';
 
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -1369,16 +1432,16 @@ function handleBankAction_(payload) {
       bsh.getRange(row, BC.STATUS).setValue('ignored');
       bsh.getRange(row, BC.RECEIPT).setValue('');
       bsh.getRange(row, BC.NOTE).setValue('not spending');
-      if (payload.remember) addRule_(ss, t.desc, 'ignore', '');
+      if (payload.remember) addRule_(ss, t.desc, 'ignore', '', entity);
     } else {
       if (status === 'matched') return { ok: false, error: 'already_matched', message: 'That charge already has a receipt.' };
       if (status === 'expense' && linked) removeBankExpense_(ss, linked);
       const category = String(payload.category || 'Other');
-      const rid = createBankExpense_(ss, t, account, category, txnId);
+      const rid = createBankExpense_(ss, t, account, category, txnId, entity);
       bsh.getRange(row, BC.STATUS).setValue('expense');
       bsh.getRange(row, BC.RECEIPT).setValue(rid);
       bsh.getRange(row, BC.NOTE).setValue('added in app');
-      if (payload.remember) addRule_(ss, t.desc, 'expense', category);
+      if (payload.remember) addRule_(ss, t.desc, 'expense', category, entity);
     }
   } finally {
     lock.releaseLock();
@@ -1405,16 +1468,19 @@ function readRules_(ss) {
   const rsh = ss.getSheetByName(CONFIG.TABS.RULES);
   const last = rsh.getLastRow();
   if (last < 2) return [];
-  return rsh.getRange(2, 1, last - 1, 3).getValues().map(function (r) {
-    return { pattern: String(r[0] || '').trim().toUpperCase(), action: String(r[1] || '').trim().toLowerCase(), category: String(r[2] || '').trim() };
+  return rsh.getRange(2, 1, last - 1, CONFIG.RULE_HEADERS.length).getValues().map(function (r) {
+    return { pattern: String(r[0] || '').trim().toUpperCase(), action: String(r[1] || '').trim().toLowerCase(), category: String(r[2] || '').trim(), entity: cleanEntity_(r[4]) };
   }).filter(function (r) { return r.pattern && (r.action === 'expense' || r.action === 'ignore'); });
 }
 
-function matchRule_(rules, desc) {
+/** A rule applies to its own book; a rule with no book applies everywhere. */
+function matchRule_(rules, desc, entity) {
   const p = rulePattern_(desc);
   if (!p) return null;
+  entity = cleanEntity_(entity) || 'Household';
   let best = null;
   rules.forEach(function (r) {
+    if (r.entity && r.entity !== entity) return;
     if (p === r.pattern || p.indexOf(r.pattern) === 0 || (r.pattern.length >= 8 && p.indexOf(r.pattern) >= 0)) {
       if (!best || r.pattern.length > best.pattern.length) best = r;
     }
@@ -1422,21 +1488,22 @@ function matchRule_(rules, desc) {
   return best;
 }
 
-function addRule_(ss, desc, action, category) {
+function addRule_(ss, desc, action, category, entity) {
   const p = rulePattern_(desc);
   if (!p) return;
+  entity = cleanEntity_(entity) || 'Household';
   const rsh = ss.getSheetByName(CONFIG.TABS.RULES);
   const last = rsh.getLastRow();
   if (last >= 2) {
-    const vals = rsh.getRange(2, 1, last - 1, 3).getValues();
+    const vals = rsh.getRange(2, 1, last - 1, CONFIG.RULE_HEADERS.length).getValues();
     for (let i = 0; i < vals.length; i++) {
-      if (String(vals[i][0]).trim().toUpperCase() === p) {
-        rsh.getRange(i + 2, 2, 1, 3).setValues([[action, category, new Date()]]);
+      if (String(vals[i][0]).trim().toUpperCase() === p && (cleanEntity_(vals[i][4]) || 'Household') === entity) {
+        rsh.getRange(i + 2, 2, 1, 4).setValues([[action, category, new Date(), entity]]);
         return;
       }
     }
   }
-  rsh.appendRow([p, action, category, new Date()]);
+  rsh.appendRow([p, action, category, new Date(), entity]);
 }
 
 /* ---- matching receipts ↔ bank charges ---- */
@@ -1456,7 +1523,7 @@ function reconcile_(ss, opts) {
   const bank = [];
   if (lastB >= 2) {
     bsh.getRange(2, 1, lastB - 1, CONFIG.BANK_HEADERS.length).getValues().forEach(function (v, i) {
-      bank.push({ row: i + 2, id: String(v[BC.ID - 1]), date: ymd_(v[BC.DATE - 1]), desc: String(v[BC.DESC - 1] || ''), amount: num_(v[BC.AMOUNT - 1]) || 0, dir: String(v[BC.DIR - 1] || 'out'), account: String(v[BC.ACCOUNT - 1] || ''), status: String(v[BC.STATUS - 1] || ''), receiptId: String(v[BC.RECEIPT - 1] || ''), note: String(v[BC.NOTE - 1] || '') });
+      bank.push({ row: i + 2, id: String(v[BC.ID - 1]), date: ymd_(v[BC.DATE - 1]), desc: String(v[BC.DESC - 1] || ''), amount: num_(v[BC.AMOUNT - 1]) || 0, dir: String(v[BC.DIR - 1] || 'out'), account: String(v[BC.ACCOUNT - 1] || ''), status: String(v[BC.STATUS - 1] || ''), receiptId: String(v[BC.RECEIPT - 1] || ''), note: String(v[BC.NOTE - 1] || ''), entity: cleanEntity_(v[BC.ENTITY - 1]) || 'Household' });
     });
   }
   const lastR = sh.getLastRow();
@@ -1466,7 +1533,7 @@ function reconcile_(ss, opts) {
       const status = String(v[RC.STATUS - 1] || '');
       if (status !== 'ok' && status !== 'superseded') return;
       receipts.push({ row: i + 2, id: String(v[RC.ID - 1]), date: ymd_(v[RC.DATE - 1]), store: String(v[RC.STORE - 1] || ''), storeType: String(v[RC.STORE_TYPE - 1] || ''), total: num_(v[RC.TOTAL - 1]) || 0, tip: num_(v[RC.TIP - 1]), payment: String(v[RC.PAYMENT - 1] || ''), status: status, source: String(v[RC.SOURCE - 1] || 'photo'), bankTxn: String(v[RC.BANK_TXN - 1] || ''), note: String(v[RC.MATCH_NOTE - 1] || ''),
-        asks: String(v[RC.ASKS - 1] || '').split(',').map(function (x) { return x.trim(); }).filter(String), reviewNotes: String(v[RC.REVIEW_NOTES - 1] || ''), dupOf: String(v[RC.DUP_OF - 1] || '') });
+        asks: String(v[RC.ASKS - 1] || '').split(',').map(function (x) { return x.trim(); }).filter(String), reviewNotes: String(v[RC.REVIEW_NOTES - 1] || ''), dupOf: String(v[RC.DUP_OF - 1] || ''), entity: cleanEntity_(v[RC.ENTITY - 1]) || 'Household' });
     });
   }
   if (!bank.length) { return out; }
@@ -1499,6 +1566,7 @@ function reconcile_(ss, opts) {
   freeRc.forEach(function (r) {
     const rT = dateFromYmd_(r.date).getTime();
     freeTx.forEach(function (b) {
+      if (b.entity !== r.entity) return;   // a PRO card charge only ever matches a PRO receipt
       const dayDiff = Math.round((dateFromYmd_(b.date).getTime() - rT) / 86400000);
       if (dayDiff < -CONFIG.MATCH_WINDOW_BEFORE || dayDiff > CONFIG.MATCH_WINDOW_AFTER) return;
       const diff = round2_(b.amount - r.total);
@@ -1568,6 +1636,212 @@ function descMatchesStore_(desc, store) {
 }
 
 /* ===================================================================
+ *  BOOKS  (Household / PRO Electrical / PCW) and the cards that decide them
+ * =================================================================== */
+
+function entityByKey_(v) {
+  const t = String(v || '').trim().toLowerCase();
+  if (!t) return null;
+  return CONFIG.ENTITIES.filter(function (e) { return e.key.toLowerCase() === t || e.code.toLowerCase() === t || e.label.toLowerCase() === t; })[0] || null;
+}
+/** A book name as written in the sheet ('Household', 'PRO Electrical', 'PCW'), or '' when unknown/blank. */
+function cleanEntity_(v) { const e = entityByKey_(v); return e ? e.key : ''; }
+function entityCode_(key) { const e = entityByKey_(key); return e ? e.code : 'H'; }
+
+/** The Drive folder a book's receipts live in. The household keeps the original folder; businesses get a sibling. */
+function entityFolder_(key) {
+  const e = entityByKey_(key);
+  if (!e || !e.folder) return getFolder_();
+  const props = PropertiesService.getScriptProperties();
+  const prop = 'FOLDER_ID_' + e.code;
+  let id = props.getProperty(prop);
+  if (id) { try { return DriveApp.getFolderById(id); } catch (err) { /* recreate below */ } }
+  const folder = DriveApp.createFolder(e.folder);
+  props.setProperty(prop, folder.getId());
+  return folder;
+}
+function entityFolderUrl_(key) {
+  try { return entityFolder_(key).getUrl(); } catch (e) { return ''; }
+}
+/** The book's folder only if it has been made already (no side effects). */
+function entityFolderIfExists_(key) {
+  const e = entityByKey_(key);
+  if (!e) return null;
+  if (!e.folder) return getFolder_();
+  const id = PropertiesService.getScriptProperties().getProperty('FOLDER_ID_' + e.code);
+  if (!id) return null;
+  try { return DriveApp.getFolderById(id); } catch (err) { return null; }
+}
+
+/** Cards tab → [{last4, card, entity, holder}] (cached briefly). */
+function readCards_(ss) {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('cards');
+  if (hit) return JSON.parse(hit);
+  const csh = ss.getSheetByName(CONFIG.TABS.CARDS);
+  let out = [];
+  if (csh && csh.getLastRow() >= 2) {
+    out = csh.getRange(2, 1, csh.getLastRow() - 1, 4).getValues().map(function (r) {
+      return { last4: String(r[0] || '').replace(/\D/g, '').slice(-4), card: String(r[1] || '').trim(), entity: cleanEntity_(r[2]), holder: String(r[3] || '').trim() };
+    }).filter(function (c) { return c.last4.length === 4 && c.entity; });
+  }
+  cache.put('cards', JSON.stringify(out), 120);
+  return out;
+}
+function cardEntity_(last4) {
+  const c = readCards_(getSpreadsheet_()).filter(function (x) { return x.last4 === last4; })[0];
+  return c ? c.entity : '';
+}
+/** Adds or updates a card → book mapping. */
+function saveCard_(ss, last4, entity, card, holder) {
+  const csh = ss.getSheetByName(CONFIG.TABS.CARDS);
+  const last = csh.getLastRow();
+  if (last >= 2) {
+    const vals = csh.getRange(2, 1, last - 1, 4).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      if (String(vals[i][0] || '').replace(/\D/g, '').slice(-4) === last4) {
+        csh.getRange(i + 2, 2, 1, 4).setValues([[card || vals[i][1] || '', entity, holder || vals[i][3] || '', new Date()]]);
+        CacheService.getScriptCache().remove('cards');
+        return;
+      }
+    }
+  }
+  const row = csh.getLastRow() + 1;
+  csh.getRange(row, 1).setNumberFormat('@');
+  csh.getRange(row, 1, 1, 5).setValues([[last4, card || '', entity, holder || '', new Date()]]);
+  CacheService.getScriptCache().remove('cards');
+}
+
+/**
+ * Moves a filed receipt to another book: Entity on the row and its lines, the photo into the book's
+ * folder, any tag shortcut along with it, the card question answered. If the lines were categorized
+ * with another book's list, the receipt is read again with the right list (one reader call).
+ */
+function setReceiptEntity_(ss, sh, ex, entityKey) {
+  const entity = cleanEntity_(entityKey);
+  if (!entity) return { ok: false, error: 'bad_request', message: 'Unknown book.' };
+  const was = ex.entity || 'Household';
+  let unlinked = false;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    sh.getRange(ex.row, RC.ENTITY).setValue(entity);
+    const asks = (ex.asks || []).filter(function (k) { return k !== 'card'; });
+    sh.getRange(ex.row, RC.ASKS).setValue(asks.join(','));
+    const notes = ex.reviewNotes.split(';').map(function (x) { return x.trim(); }).filter(function (x) { return x && x.indexOf(ASK_NOTES.card) !== 0; });
+    sh.getRange(ex.row, RC.REVIEW_NOTES).setValue(notes.join('; '));
+    sh.getRange(ex.row, RC.NEEDS_REVIEW).setValue(notes.length || ex.dupOf ? 'YES' : '');
+    const ish = ss.getSheetByName(CONFIG.TABS.ITEMS);
+    const last = ish.getLastRow();
+    if (last >= 2) {
+      const ids = ish.getRange(2, 1, last - 1, 1).getValues();
+      for (let i = 0; i < ids.length; i++) if (String(ids[i][0]) === ex.id) ish.getRange(i + 2, IC.ENTITY).setValue(entity);
+    }
+    // A charge on another book's statement cannot be this receipt's: free it, and look again in the new book below
+    if (entity !== was && ex.bankTxn) {
+      const bsh = ss.getSheetByName(CONFIG.TABS.BANK);
+      const brow = findBankRow_(bsh, ex.bankTxn);
+      if (brow && String(bsh.getRange(brow, BC.ENTITY).getValue() || 'Household') !== entity) {
+        bsh.getRange(brow, BC.STATUS).setValue('no_receipt'); bsh.getRange(brow, BC.RECEIPT).setValue(''); bsh.getRange(brow, BC.NOTE).setValue('');
+        sh.getRange(ex.row, RC.BANK_TXN).setValue(''); sh.getRange(ex.row, RC.MATCH_NOTE).setValue('');
+        unlinked = true;
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  if (ex.fileId && entity !== was) {
+    try {
+      const file = DriveApp.getFileById(ex.fileId);
+      file.moveTo(entityFolder_(entity));
+      if (ex.tag) { removeTagShortcut_(ex.tag, file, was); fileTagShortcut_(ex.tag, file, entity); }
+    } catch (e) { log_('warn', 'move ' + ex.id + ' to ' + entity + ': ' + e); }
+  }
+  // Lines categorized for another book? Read the receipt again with the right list.
+  let reread = false;
+  if (entity !== was && ex.fileId && ex.source !== 'bank') {
+    const cats = getCategories_(entity);
+    const items = readItemsFor_(ss, ex.id);
+    if (items.some(function (it) { return cats.indexOf(String(it.category)) < 0; })) {
+      try {
+        const fresh = readReceiptRow_(sh, ex.row);
+        const oldTip = fresh.tip, oldAsks = fresh.asks;
+        const r = processExisting_(ss, sh, fresh, null);
+        if (r && r.ok && r.status === 'ok') {
+          reread = true;
+          // keep a tip the shopper had already confirmed
+          const now = readReceiptRow_(sh, ex.row);
+          if (oldTip !== null && oldAsks.indexOf('tip') < 0 && (now.tip === null || now.tip === 0) && oldTip > 0) {
+            sh.getRange(ex.row, RC.TIP).setValue(oldTip);
+            sh.getRange(ex.row, RC.TOTAL).setValue(round2_(now.total + oldTip));
+          }
+        }
+      } catch (e) { log_('warn', 'reread ' + ex.id + ' for ' + entity + ': ' + e); }
+    }
+  }
+  if (!reread && entity !== was && ex.source !== 'bank') {
+    try { reconcile_(ss, { receiptIds: [ex.id] }); } catch (e) { log_('warn', 'reconcile after move ' + ex.id + ': ' + e); }
+  }
+  return { ok: true, receiptId: ex.id, entity: entity, reread: reread, unlinked: unlinked };
+}
+
+/** App action: "this receipt is PRO's" — moves one receipt. { receiptId, entity, remember: true|false } */
+function handleEntitySet_(payload) {
+  const id = String(payload.receiptId || '').trim();
+  const entity = cleanEntity_(payload.entity);
+  if (!id || !entity) return { ok: false, error: 'bad_request', message: 'Need receiptId and a book (Household, PRO Electrical or PCW).' };
+  const ss = getSpreadsheet_();
+  ensureTabs_(ss);
+  const sh = ss.getSheetByName(CONFIG.TABS.RECEIPTS);
+  const ex = findReceiptById_(sh, id);
+  if (!ex) return { ok: false, error: 'not_found', message: 'Receipt not found.' };
+  const res = setReceiptEntity_(ss, sh, ex, entity);
+  if (!res.ok) return res;
+  if (payload.remember && ex.card) saveCard_(ss, ex.card, entity, String(payload.card || ''), String(payload.holder || ''));
+  const now = readReceiptRow_(sh, ex.row);
+  return { ok: true, receiptId: id, entity: now.entity, card: now.card, reread: res.reread, asks: now.asks, needsReview: now.needsReview, reviewNotes: now.reviewNotes, items: readItemsFor_(ss, id), total: now.total, tip: now.tip, photoUrl: now.photoUrl, remembered: !!(payload.remember && ex.card) };
+}
+
+/**
+ * App action: "card ****4411 is PRO's". Saves the card and moves every receipt paid with it that was
+ * waiting on that answer (and the one asked from, if given). { last4, entity, card?, holder?, receiptId? }
+ */
+function handleCardSet_(payload) {
+  const last4 = String(payload.last4 || '').replace(/\D/g, '').slice(-4);
+  const entity = cleanEntity_(payload.entity);
+  if (last4.length !== 4 || !entity) return { ok: false, error: 'bad_request', message: 'Need the card\'s last four digits and a book.' };
+  const ss = getSpreadsheet_();
+  ensureTabs_(ss);
+  saveCard_(ss, last4, entity, String(payload.card || ''), String(payload.holder || ''));
+  const sh = ss.getSheetByName(CONFIG.TABS.RECEIPTS);
+  const moved = [];
+  const last = sh.getLastRow();
+  if (last >= 2) {
+    const vals = sh.getRange(2, 1, last - 1, CONFIG.RECEIPT_HEADERS.length).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      const card = String(vals[i][RC.CARD - 1] || '').replace(/\D/g, '').slice(-4);
+      if (card !== last4) continue;
+      const asks = String(vals[i][RC.ASKS - 1] || '');
+      const id = String(vals[i][RC.ID - 1]);
+      const waiting = /(^|,)card(,|$)/.test(asks);
+      if (!waiting && id !== String(payload.receiptId || '')) continue;
+      const ex = readReceiptRow_(sh, i + 2);
+      const r = setReceiptEntity_(ss, sh, ex, entity);
+      if (r.ok) moved.push(id);
+    }
+  }
+  const out = { ok: true, last4: last4, entity: entity, moved: moved, cards: publicCards_(ss) };
+  if (payload.receiptId) {
+    const ex = findReceiptById_(sh, String(payload.receiptId));
+    if (ex) { out.receiptId = ex.id; out.asks = ex.asks; out.needsReview = ex.needsReview; out.reviewNotes = ex.reviewNotes; out.items = readItemsFor_(ss, ex.id); out.total = ex.total; out.tip = ex.tip; }
+  }
+  return out;
+}
+function publicCards_(ss) {
+  return readCards_(ss).map(function (c) { return { last4: c.last4, card: c.card, entity: c.entity, holder: c.holder }; });
+}
+
+/* ===================================================================
  *  TAGS  ("Homeschool" etc. — a mark the shopper puts on a whole receipt)
  * =================================================================== */
 
@@ -1609,15 +1883,20 @@ function handleTagCreate_(payload) {
   try {
     if (category) {
       // A new category becomes a real category (the Categories tab is what the reader and the app use)
-      const cats = getCategories_();
+      const cats = getCategories_('Household');
       const match = cats.filter(function (c) { return c.toLowerCase() === category.toLowerCase(); })[0];
       if (match) category = match;
       else {
+        // tags are household claims, so the category joins the household list (just above its "Other")
         const csh = ss.getSheetByName(CONFIG.TABS.CATEGORIES);
-        const otherRow = cats.indexOf('Other') >= 0 ? cats.indexOf('Other') + 2 : 0;
-        if (otherRow) { csh.insertRowBefore(otherRow); csh.getRange(otherRow, 1).setValue(category); }
-        else csh.appendRow([category]);
-        CacheService.getScriptCache().remove('categories');
+        let otherRow = 0;
+        if (csh.getLastRow() >= 2) {
+          const rows = csh.getRange(2, 1, csh.getLastRow() - 1, 2).getValues();
+          for (let i = 0; i < rows.length; i++) if (String(rows[i][0]).trim() === 'Other' && (cleanEntity_(rows[i][1]) || 'Household') === 'Household') { otherRow = i + 2; break; }
+        }
+        if (otherRow) { csh.insertRowBefore(otherRow); csh.getRange(otherRow, 1, 1, 2).setValues([[category, 'Household']]); }
+        else csh.appendRow([category, 'Household']);
+        CONFIG.ENTITIES.forEach(function (e) { CacheService.getScriptCache().remove('categories:' + e.key); });
       }
     }
     tsh.appendRow([name, category, String(payload.notes || '').trim().slice(0, 2000), String(payload.counts || '').trim().slice(0, 4000), String(payload.notCounts || '').trim().slice(0, 4000)]);
@@ -1625,12 +1904,12 @@ function handleTagCreate_(payload) {
   } finally {
     lock.releaseLock();
   }
-  try { tagFolder_(name); } catch (e) { log_('warn', 'tag folder ' + name + ': ' + e); }
+  try { tagFolder_(name, 'Household'); } catch (e) { log_('warn', 'tag folder ' + name + ': ' + e); }
   return { ok: true, tag: name, category: category, tags: publicTags_(ss) };
 }
 
 function publicTags_(ss) {
-  return readTags_(ss).map(function (t) { return { name: t.tag, category: t.category, notes: t.notes, counts: t.counts, notCounts: t.notCounts, folder: tagFolderUrl_(t.tag) }; });
+  return readTags_(ss).map(function (t) { const f = tagFolderUrls_(t.tag); return { name: t.tag, category: t.category, notes: t.notes, counts: t.counts, notCounts: t.notCounts, folder: f.H || '', folders: f }; });
 }
 
 function tagCategory_(tag) {
@@ -1638,8 +1917,8 @@ function tagCategory_(tag) {
   return t ? t.category : '';
 }
 
-function tagFolder_(tag) {
-  const root = getFolder_();
+function tagFolder_(tag, entity) {
+  const root = entityFolder_(entity || 'Household');
   let it = root.getFoldersByName(CONFIG.TAGGED_FOLDER);
   const tagged = it.hasNext() ? it.next() : root.createFolder(CONFIG.TAGGED_FOLDER);
   it = tagged.getFoldersByName(tag);
@@ -1647,15 +1926,31 @@ function tagFolder_(tag) {
 }
 
 const tagFolderUrlCache_ = {};
-function tagFolderUrl_(tag) {
-  if (tagFolderUrlCache_[tag]) return tagFolderUrlCache_[tag];
-  try { tagFolderUrlCache_[tag] = tagFolder_(tag).getUrl(); } catch (e) { tagFolderUrlCache_[tag] = ''; }
-  return tagFolderUrlCache_[tag];
+function tagFolderUrl_(tag, entity) {
+  const k = (entity || 'Household') + '|' + tag;
+  if (tagFolderUrlCache_[k]) return tagFolderUrlCache_[k];
+  try { tagFolderUrlCache_[k] = tagFolder_(tag, entity).getUrl(); } catch (e) { tagFolderUrlCache_[k] = ''; }
+  return tagFolderUrlCache_[k];
+}
+/** Tag folders that already exist, per book (made on first use, so a book without tagged receipts has none). */
+function tagFolderUrls_(tag) {
+  const out = {};
+  CONFIG.ENTITIES.forEach(function (e) {
+    try {
+      const root = entityFolderIfExists_(e.key);
+      if (!root) return;
+      const it = root.getFoldersByName(CONFIG.TAGGED_FOLDER);
+      if (!it.hasNext()) return;
+      const it2 = it.next().getFoldersByName(tag);
+      if (it2.hasNext()) out[e.code] = it2.next().getUrl();
+    } catch (err) { /* skip */ }
+  });
+  return out;
 }
 
 /** A shortcut to the receipt's photo in Tagged/<Tag>, so the folder is the claim file. */
-function fileTagShortcut_(tag, file) {
-  const folder = tagFolder_(tag);
+function fileTagShortcut_(tag, file, entity) {
+  const folder = tagFolder_(tag, entity);
   const name = file.getName();
   const existing = folder.getFilesByName(name);
   if (existing.hasNext()) return existing.next();
@@ -1664,9 +1959,9 @@ function fileTagShortcut_(tag, file) {
   return sc;
 }
 
-function removeTagShortcut_(tag, file) {
+function removeTagShortcut_(tag, file, entity) {
   try {
-    const folder = tagFolder_(tag);
+    const folder = tagFolder_(tag, entity);
     const it = folder.getFilesByName(file.getName());
     while (it.hasNext()) it.next().setTrashed(true);
   } catch (e) { /* best effort */ }
@@ -1739,8 +2034,8 @@ function handleTag_(payload) {
   if (ex.fileId) {
     try {
       const file = DriveApp.getFileById(ex.fileId);
-      if (ex.tag && ex.tag !== tag) removeTagShortcut_(ex.tag, file);
-      if (tag) fileTagShortcut_(tag, file);
+      if (ex.tag && ex.tag !== tag) removeTagShortcut_(ex.tag, file, ex.entity);
+      if (tag) fileTagShortcut_(tag, file, ex.entity);
     } catch (e) { log_('warn', 'tag shortcut ' + id + ': ' + e); }
   }
   return { ok: true, receiptId: id, tag: tag, category: cat, claimed: claimed, items: readItemsFor_(ss, id) };
@@ -1750,49 +2045,58 @@ function handleTag_(payload) {
  *  BUDGETS
  * =================================================================== */
 
+/** Budgets tab → per book: { budgets: {H: {cat: amt}, P: {...}, C: {...}}, proposed: {...same...} } */
 function readBudgets_(ss) {
   const bsh = ss.getSheetByName(CONFIG.TABS.BUDGETS);
   const out = { budgets: {}, proposed: {} };
+  CONFIG.ENTITIES.forEach(function (e) { out.budgets[e.code] = {}; out.proposed[e.code] = {}; });
   const last = bsh.getLastRow();
   if (last < 2) return out;
-  bsh.getRange(2, 1, last - 1, 3).getValues().forEach(function (r) {
+  bsh.getRange(2, 1, last - 1, CONFIG.BUDGET_HEADERS.length).getValues().forEach(function (r) {
     const cat = String(r[0] || '').trim();
     if (!cat) return;
+    const code = entityCode_(cleanEntity_(r[4]) || 'Household');
     const b = num_(r[1]), p = num_(r[2]);
-    if (b !== null) out.budgets[cat] = round2_(b);
-    if (p !== null) out.proposed[cat] = round2_(p);
+    if (b !== null) out.budgets[code][cat] = round2_(b);
+    if (p !== null) out.proposed[code][cat] = round2_(p);
   });
   return out;
 }
 
-/** App action: save budgets. { budgets: {category: amount}, proposed: {category: amount} } */
+/** App action: save one book's budgets. { entity, budgets: {category: amount}, proposed: {category: amount} } */
 function handleBudget_(payload) {
   const budgets = payload.budgets && typeof payload.budgets === 'object' ? payload.budgets : {};
   const proposed = payload.proposed && typeof payload.proposed === 'object' ? payload.proposed : {};
+  const entity = cleanEntity_(payload.entity) || 'Household';
+  const code = entityCode_(entity);
   const ss = getSpreadsheet_();
   ensureTabs_(ss);
   const bsh = ss.getSheetByName(CONFIG.TABS.BUDGETS);
-  const cats = getCategories_().slice();
+  const cats = getCategories_(entity).slice();
   Object.keys(budgets).concat(Object.keys(proposed)).forEach(function (c) { if (cats.indexOf(c) < 0) cats.push(c); });
   const old = readBudgets_(ss);
+  const oldB = old.budgets[code] || {}, oldP = old.proposed[code] || {};
   const now = new Date();
   const rows = cats.map(function (c) {
     const b = num_(budgets[c]);
     const p = num_(proposed[c]);
-    const bOut = b === null ? (old.budgets[c] != null && !(c in budgets) ? old.budgets[c] : '') : round2_(b);
-    const pOut = p === null ? (old.proposed[c] != null ? old.proposed[c] : '') : round2_(p);
-    return [c, bOut, pOut, now];
+    const bOut = b === null ? (oldB[c] != null && !(c in budgets) ? oldB[c] : '') : round2_(b);
+    const pOut = p === null ? (oldP[c] != null ? oldP[c] : '') : round2_(p);
+    return [c, bOut, pOut, now, entity];
   });
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
+    // keep the other books' rows, rewrite this book's
     const last = bsh.getLastRow();
+    const keep = last >= 2 ? bsh.getRange(2, 1, last - 1, CONFIG.BUDGET_HEADERS.length).getValues().filter(function (r) { return String(r[0] || '').trim() && (cleanEntity_(r[4]) || 'Household') !== entity; }) : [];
     if (last >= 2) bsh.getRange(2, 1, last - 1, CONFIG.BUDGET_HEADERS.length).clearContent();
-    bsh.getRange(2, 1, rows.length, CONFIG.BUDGET_HEADERS.length).setValues(rows);
+    const all = keep.concat(rows);
+    if (all.length) bsh.getRange(2, 1, all.length, CONFIG.BUDGET_HEADERS.length).setValues(all);
   } finally {
     lock.releaseLock();
   }
-  return { ok: true, budgets: readBudgets_(ss).budgets };
+  return { ok: true, entity: entity, budgets: readBudgets_(ss).budgets[code] };
 }
 
 /* ===================================================================
@@ -1831,6 +2135,9 @@ function writeReceipt_(ss, sh, row, rec, status) {
   values[RC.TAG - 1] = rec.tag || '';
   values[RC.TAG_HINT - 1] = rec.tag ? '' : (rec.tagHint || '');
   values[RC.ASKS - 1] = (rec.asks || []).join(',');
+  values[RC.ENTITY - 1] = rec.entity || 'Household';
+  values[RC.CARD - 1] = rec.card || '';
+  sh.getRange(row, RC.CARD).setNumberFormat('@');   // before the write: "0042" must stay text
   sh.getRange(row, 1, 1, values.length).setValues([values]);
   // appendRow() in phase 1 gives date cells an automatic date-time format; put the column formats back
   sh.getRange(row, RC.DATE).setNumberFormat('yyyy-mm-dd');
@@ -1843,7 +2150,7 @@ function writeReceipt_(ss, sh, row, rec, status) {
   if (rec.items.length) {
     const d = dateFromYmd_(rec.date);
     const rows = rec.items.map(function (it) {
-      return [rec.id, d, rec.store, it.name, it.qty, it.unitPrice === null ? '' : it.unitPrice, it.lineTotal, it.category, rec.who, '', it.tag || '', it.tagHint || ''];
+      return [rec.id, d, rec.store, it.name, it.qty, it.unitPrice === null ? '' : it.unitPrice, it.lineTotal, it.category, rec.who, '', it.tag || '', it.tagHint || '', rec.entity || 'Household'];
     });
     ish.getRange(ish.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
   }
@@ -1928,7 +2235,9 @@ function readReceiptRow_(sh, row) {
     bankTxn: String(v[RC.BANK_TXN - 1] || ''),
     tag: String(v[RC.TAG - 1] || ''),
     tagHint: String(v[RC.TAG_HINT - 1] || ''),
-    asks: String(v[RC.ASKS - 1] || '').split(',').map(function (x) { return x.trim(); }).filter(String)
+    asks: String(v[RC.ASKS - 1] || '').split(',').map(function (x) { return x.trim(); }).filter(String),
+    entity: cleanEntity_(v[RC.ENTITY - 1]),
+    card: String(v[RC.CARD - 1] || '').replace(/\D/g, '').slice(-4)
   };
 }
 
@@ -1942,9 +2251,11 @@ function buildSummary_() {
   const sh = ss.getSheetByName(CONFIG.TABS.RECEIPTS);
   const ish = ss.getSheetByName(CONFIG.TABS.ITEMS);
   const bsh = ss.getSheetByName(CONFIG.TABS.BANK);
-  const cats = getCategories_();
+  const cats = getAllCategories_();
   const catIdx = {}; cats.forEach(function (c, i) { catIdx[c] = i; });
   function cat(c) { if (!(c in catIdx)) { catIdx[c] = cats.length; cats.push(c); } return catIdx[c]; }
+  const catsBy = {};
+  CONFIG.ENTITIES.forEach(function (e) { catsBy[e.code] = getCategories_(e.key); });
   const whos = []; const whoIdx = {};
   function who(w) { w = w || 'Unknown'; if (!(w in whoIdx)) { whoIdx[w] = whos.length; whos.push(w); } return whoIdx[w]; }
 
@@ -1976,6 +2287,10 @@ function buildSummary_() {
       if (String(v[RC.NEEDS_REVIEW - 1] || '') === 'YES') { r.nr = 1; r.rn = String(v[RC.REVIEW_NOTES - 1] || '').slice(0, 200); }
       const asks = String(v[RC.ASKS - 1] || '').split(',').map(function (x) { return x.trim(); }).filter(String);
       if (asks.length) { r.ask = asks; r.sub = num_(v[RC.SUBTOTAL - 1]); r.gst = num_(v[RC.GST - 1]); r.tip = num_(v[RC.TIP - 1]); }
+      const ecode = entityCode_(cleanEntity_(v[RC.ENTITY - 1]) || 'Household');
+      if (ecode !== 'H') r.e = ecode;
+      const card = String(v[RC.CARD - 1] || '').replace(/\D/g, '').slice(-4);
+      if (card.length === 4) r.cd = card;
       if (String(v[RC.DUP_OF - 1] || '')) r.dup = String(v[RC.DUP_OF - 1]);
       if (String(v[RC.TAG - 1] || '')) r.tg = String(v[RC.TAG - 1]);
       else { const th = String(v[RC.TAG_HINT - 1] || ''); if (th && th !== 'dismissed') r.th = th; }
@@ -2030,8 +2345,10 @@ function buildSummary_() {
       const status = String(v[BC.STATUS - 1] || '');
       const dir = String(v[BC.DIR - 1] || 'out');
       const up = v[BC.UPLOADED - 1] instanceof Date ? v[BC.UPLOADED - 1].getTime() : 0;
-      if (!accounts[acct]) accounts[acct] = { name: acct, from: date, to: date, count: 0, matched: 0, noReceipt: 0, lastUpload: up };
-      const a = accounts[acct];
+      const ecode = entityCode_(cleanEntity_(v[BC.ENTITY - 1]) || 'Household');
+      const akey = ecode + '|' + acct;
+      if (!accounts[akey]) accounts[akey] = { name: acct, e: ecode, from: date, to: date, count: 0, matched: 0, noReceipt: 0, lastUpload: up };
+      const a = accounts[akey];
       a.count++;
       if (date && (date < a.from || !a.from)) a.from = date;
       if (date && date > a.to) a.to = date;
@@ -2039,7 +2356,7 @@ function buildSummary_() {
       if (status === 'matched') a.matched++;
       if (dir === 'out' && status === 'no_receipt') {
         a.noReceipt++;
-        if (date >= noReceiptFrom) noReceipt.push({ id: String(v[BC.ID - 1]), d: date, desc: String(v[BC.DESC - 1] || ''), amt: num_(v[BC.AMOUNT - 1]) || 0, acct: acct });
+        if (date >= noReceiptFrom) noReceipt.push({ id: String(v[BC.ID - 1]), d: date, desc: String(v[BC.DESC - 1] || ''), amt: num_(v[BC.AMOUNT - 1]) || 0, acct: acct, e: ecode });
       }
     });
   }
@@ -2051,6 +2368,9 @@ function buildSummary_() {
     ok: true,
     v: 2,
     tags: tags,
+    entities: CONFIG.ENTITIES.map(function (e) { return { code: e.code, key: e.key, label: e.label, icon: e.icon, folder: entityFolderIfExists_(e.key) ? entityFolderUrl_(e.key) : '' }; }),
+    cats: catsBy,
+    cards: publicCards_(ss),
     generatedAt: new Date().toISOString(),
     today: today,
     currency: CONFIG.CURRENCY,
@@ -2146,14 +2466,14 @@ function ensureTabs_(ss) {
     bsh.getRange('B:B').setNumberFormat('yyyy-mm-dd');
     bsh.getRange('D:D').setNumberFormat('#,##0.00');
     bsh.getRange('K:K').setNumberFormat('yyyy-mm-dd hh:mm');
-  }
+  } else upgradeHeaders_(bsh, CONFIG.BANK_HEADERS);
 
   let rsh = ss.getSheetByName(CONFIG.TABS.RULES);
   if (!rsh) rsh = ss.insertSheet(CONFIG.TABS.RULES);
   if (rsh.getLastRow() === 0) {
     rsh.getRange(1, 1, 1, CONFIG.RULE_HEADERS.length).setValues([CONFIG.RULE_HEADERS]).setFontWeight('bold');
     rsh.setFrozenRows(1);
-  }
+  } else upgradeHeaders_(rsh, CONFIG.RULE_HEADERS);
 
   let gsh = ss.getSheetByName(CONFIG.TABS.BUDGETS);
   if (!gsh) gsh = ss.insertSheet(CONFIG.TABS.BUDGETS);
@@ -2161,6 +2481,15 @@ function ensureTabs_(ss) {
     gsh.getRange(1, 1, 1, CONFIG.BUDGET_HEADERS.length).setValues([CONFIG.BUDGET_HEADERS]).setFontWeight('bold');
     gsh.setFrozenRows(1);
     gsh.getRange('B:C').setNumberFormat('#,##0.00');
+  } else upgradeHeaders_(gsh, CONFIG.BUDGET_HEADERS);
+
+  let kssh = ss.getSheetByName(CONFIG.TABS.CARDS);
+  if (!kssh) kssh = ss.insertSheet(CONFIG.TABS.CARDS);
+  if (kssh.getLastRow() === 0) {
+    kssh.getRange(1, 1, 1, CONFIG.CARD_HEADERS.length).setValues([CONFIG.CARD_HEADERS]).setFontWeight('bold');
+    kssh.setFrozenRows(1);
+    kssh.getRange('A:A').setNumberFormat('@');
+    kssh.getRange(2, 1).setNote('Last four digits of each card → which book its receipts belong to (Household, PRO Electrical or PCW). The app fills this in the first time it sees a card; edit freely.');
   }
 
   let tsh = ss.getSheetByName(CONFIG.TABS.TAGS);
@@ -2194,8 +2523,19 @@ function ensureTabs_(ss) {
   let csh = ss.getSheetByName(CONFIG.TABS.CATEGORIES);
   if (!csh) csh = ss.insertSheet(CONFIG.TABS.CATEGORIES);
   if (csh.getLastRow() === 0) {
-    csh.getRange(1, 1).setValue('Category (edit this list; the app reads it)').setFontWeight('bold');
-    csh.getRange(2, 1, CONFIG.CATEGORIES.length, 1).setValues(CONFIG.CATEGORIES.map(function (c) { return [c]; }));
+    csh.getRange(1, 1, 1, 2).setValues([['Category (edit this list; the app reads it)', 'Book']]).setFontWeight('bold');
+    const rows = CONFIG.CATEGORIES.map(function (c) { return [c, 'Household']; });
+    Object.keys(CONFIG.BUSINESS_CATEGORIES).forEach(function (k) { CONFIG.BUSINESS_CATEGORIES[k].forEach(function (c) { rows.push([c, k]); }); });
+    csh.getRange(2, 1, rows.length, 2).setValues(rows);
+  } else if (!String(csh.getRange(1, 2).getValue() || '').trim()) {
+    // Categories tab from before the business books: label the existing rows Household, add the business lists
+    csh.getRange(1, 2).setValue('Book').setFontWeight('bold');
+    const last = csh.getLastRow();
+    if (last >= 2) csh.getRange(2, 2, last - 1, 1).setValues(csh.getRange(2, 1, last - 1, 1).getValues().map(function (r) { return [String(r[0] || '').trim() ? 'Household' : '']; }));
+    const rows = [];
+    Object.keys(CONFIG.BUSINESS_CATEGORIES).forEach(function (k) { CONFIG.BUSINESS_CATEGORIES[k].forEach(function (c) { rows.push([c, k]); }); });
+    csh.getRange(csh.getLastRow() + 1, 1, rows.length, 2).setValues(rows);
+    CONFIG.ENTITIES.forEach(function (e) { CacheService.getScriptCache().remove('categories:' + e.key); });
   }
 
   let lsh = ss.getSheetByName(CONFIG.TABS.LOG);
@@ -2205,24 +2545,41 @@ function ensureTabs_(ss) {
   }
 }
 
-function getCategories_() {
+/** Adds any header cells a tab is missing (a sheet made by an older version). */
+function upgradeHeaders_(sheet, headers) {
+  const hdr = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  let have = 0;
+  for (let i = 0; i < hdr.length; i++) if (String(hdr[i] || '').trim()) have = i + 1;
+  if (have < headers.length) sheet.getRange(1, have + 1, 1, headers.length - have).setValues([headers.slice(have)]).setFontWeight('bold');
+}
+
+/** The category list of one book (Categories tab, column B says which book; blank = Household). */
+function getCategories_(entity) {
+  entity = cleanEntity_(entity) || 'Household';
   const cache = CacheService.getScriptCache();
-  const hit = cache.get('categories');
+  const key = 'categories:' + entity;
+  const hit = cache.get(key);
   if (hit) return JSON.parse(hit);
-  let cats = CONFIG.CATEGORIES.slice();
+  let cats = entity === 'Household' ? CONFIG.CATEGORIES.slice() : (CONFIG.BUSINESS_CATEGORIES[entity] || CONFIG.CATEGORIES).slice();
   try {
     const ss = getSpreadsheet_();
     const csh = ss.getSheetByName(CONFIG.TABS.CATEGORIES);
     if (csh && csh.getLastRow() >= 2) {
-      const vals = csh.getRange(2, 1, csh.getLastRow() - 1, 1).getValues()
-        .map(function (r) { return String(r[0] || '').trim(); })
-        .filter(function (s) { return s; });
+      const vals = csh.getRange(2, 1, csh.getLastRow() - 1, 2).getValues()
+        .filter(function (r) { return String(r[0] || '').trim() && ((cleanEntity_(r[1]) || 'Household') === entity); })
+        .map(function (r) { return String(r[0] || '').trim(); });
       if (vals.length) cats = vals;
     }
   } catch (e) { /* fall back to defaults */ }
   if (cats.indexOf('Other') < 0) cats.push('Other');
-  cache.put('categories', JSON.stringify(cats), 600);
+  cache.put(key, JSON.stringify(cats), 600);
   return cats;
+}
+/** Every category across the books, household first, each once (the feed indexes items against this). */
+function getAllCategories_() {
+  const out = [];
+  CONFIG.ENTITIES.forEach(function (e) { getCategories_(e.key).forEach(function (c) { if (out.indexOf(c) < 0) out.push(c); }); });
+  return out;
 }
 
 function getModel_() {
